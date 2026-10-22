@@ -4,6 +4,20 @@
 
 Consulte produtos, preços, custos e margens do WinThor pelo Telegram. Use o painel web para configurar o sistema e controlar o acesso de cada usuário.
 
+## Acesso rápido no Windows
+
+Depois da instalação, use os arquivos BAT com dois cliques, sem ativar o ambiente virtual manualmente:
+
+| Arquivo | Função |
+|---|---|
+| **[configurar.bat](configurar.bat)** | Configurar o Oracle e a porta da API. Ao sair, oferece iniciar a aplicação e abrir o painel. |
+| **[iniciar.bat](iniciar.bat)** | Iniciar o bot/API e perguntar se deseja abrir o painel no navegador. |
+| **[myBotWinthor.bat](myBotWinthor.bat)** | Mostrar apenas o banner da aplicação; não inicia nem configura o sistema. |
+
+**Primeiro uso:** instale as dependências abaixo → abra `configurar.bat` → inicie a aplicação → configure o Telegram pelo painel.
+
+**Uso diário:** abra `iniciar.bat`. Para mudar a conexão Oracle ou a porta, pare a aplicação e abra `configurar.bat` novamente. O Oracle também pode ser configurado pelo painel web.
+
 ## 1. Instalar
 
 Você precisa de **Python para Windows**, acesso ao Oracle do WinThor e um token de bot do Telegram.
@@ -27,7 +41,9 @@ Se o serviço Windows estiver instalado, ele será utilizado; caso contrário, a
 
 O `iniciar.bat` abre um terminal próprio para a execução. Na execução manual, **Ctrl+C** solicita o encerramento e mostra uma mensagem de finalização, sem traceback de `KeyboardInterrupt`. O iniciador aguarda o processo terminar antes de fechar. Se a API estiver rodando como serviço Windows, pare-a pelo gerenciamento de serviços; fechar o iniciador não para o serviço.
 
-Na pasta do projeto, execute:
+### Alternativa pelo terminal
+
+Se preferir iniciar sem o BAT, execute na pasta do projeto:
 
 ```powershell
 .\.venv\Scripts\python.exe bot.py
@@ -41,9 +57,9 @@ Esse comando inicia o painel e o bot, sem precisar ativar o ambiente virtual.
 
 Para ativar o ambiente no PowerShell, se preferir, use `.\.venv\Scripts\Activate.ps1` e depois `python bot.py`.
 
-## 3. Configurar no painel
+## 3. Configurar pelo BAT ou pelo painel
 
-### Alternativa: configurar pelo arquivo BAT
+### Configurar pelo arquivo BAT
 
 Com o projeto e o serviço Windows **parados**, abra **`configurar.bat`** com dois cliques. O menu permite:
 
