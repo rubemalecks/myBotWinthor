@@ -12,6 +12,7 @@ Depois da instalação, use os arquivos BAT com dois cliques, sem ativar o ambie
 |---|---|
 | **[configurar.bat](configurar.bat)** | Configurar o Oracle e a porta da API. Ao sair, oferece iniciar a aplicação e abrir o painel. |
 | **[iniciar.bat](iniciar.bat)** | Iniciar o bot/API e perguntar se deseja abrir o painel no navegador. |
+| **[monitor.bat](monitor.bat)** | Acompanhar em tempo real as consultas, requisições HTTP e erros da aplicação executada como serviço Windows. |
 | **[myBotWinthor.bat](myBotWinthor.bat)** | Mostrar apenas o banner da aplicação; não inicia nem configura o sistema. |
 
 **Primeiro uso:** instale as dependências abaixo → abra `configurar.bat` → inicie a aplicação → configure o Telegram pelo painel.
@@ -40,6 +41,31 @@ Se usar o Oracle Instant Client, coloque as DLLs diretamente na pasta **`oracle_
 Se o serviço Windows estiver instalado, ele será utilizado; caso contrário, a execução permanece no terminal, que deve ficar aberto. O navegador só abre depois de o painel responder. Se a API já estiver ativa, nenhuma nova instância será criada.
 
 O `iniciar.bat` abre um terminal próprio para a execução. Na execução manual, **Ctrl+C** solicita o encerramento e mostra uma mensagem de finalização, sem traceback de `KeyboardInterrupt`. O iniciador aguarda o processo terminar antes de fechar. Se a API estiver rodando como serviço Windows, pare-a pelo gerenciamento de serviços; fechar o iniciador não para o serviço.
+
+Se o serviço apresentar **Erro 2 / arquivo não encontrado**, ele pode apontar para uma `.venv` antiga ou para um `pythonservice.exe` ausente. Abra o PowerShell **como administrador**, entre na pasta atual do projeto e execute:
+
+```powershell
+.\.venv\Scripts\python.exe service_helper.py install
+.\iniciar.bat
+```
+
+Esse comando instala ou atualiza o registro do serviço com o ambiente atual. O painel também oferece **Reparar inicialização automática** quando detecta o executável ausente. O iniciador informa o código real de falhas do Windows e não inicia outra instância manual quando o serviço instalado falha.
+
+### Monitorar consultas com o serviço ativo
+
+Abra **`monitor.bat`** para ver as últimas **50 linhas** de `bot-service.log` e acompanhar as novas entradas em tempo real. As linhas **CONSULTA** identificam quem consultou (nome, ID e username do Telegram), o tipo/código/termo pesquisado, a etapa, a quantidade de registros, a duração e eventuais erros. As requisições HTTP do painel/API também aparecem no log.
+
+O monitor pode ser aberto antes do serviço: ele aguarda o arquivo aparecer. **Fechar a janela ou pressionar Ctrl+C encerra somente o monitor**, sem parar o serviço. Ele apenas lê o arquivo e não inicia outra instância do bot. A execução manual de `bot.py` continua mostrando seus logs no próprio terminal.
+
+Pelo PowerShell, você pode ajustar a visualização:
+
+```powershell
+.\monitor.bat --linhas 200
+.\monitor.bat --somente-consultas
+.\monitor.bat --linhas 0
+```
+
+`--linhas 0` acompanha apenas as novas entradas. O arquivo `bot-service.log` fica na pasta do projeto e está excluído do Git. Após atualizar uma instalação que já está rodando como serviço, reinicie o serviço para aplicar a saída UTF-8 em tempo real.
 
 ### Alternativa pelo terminal
 
@@ -189,6 +215,8 @@ Se o Oracle estiver indisponível, o painel mantém os códigos já salvos como 
 Preços, custos e margens respeitam esses limites, inclusive nas consultas do administrador. Os preços continuam regionais (`PCTABPR`); a restrição de filial verifica o registro do produto em `PCEST`, sem exigir estoque positivo. Perfis antigos continuam com acesso a todas as opções até serem limitados.
 
 Na consulta de produto, aparecem somente tabelas ativas com **`PVENDA > 0`**. Se houver preço em uma só, apenas ela é mostrada. Se o produto existir nas filiais permitidas, mas não houver preço nas tabelas autorizadas, o bot informa que ele não está precificado nessas tabelas. Produto inexistente tem uma mensagem diferente.
+
+**Produtos excluídos não são apresentados.** As consultas exigem `PCPRODUT.DTEXCLUSAO IS NULL`, tanto nas buscas por código, foto e nome quanto nos custos, nas opções de filial/região do departamento e nos cálculos de lucro. Produtos com data de exclusão preenchida não entram nos totais do departamento e são tratados como não encontrados ao consultar seu código.
 
 ## 5. Dados e backup — importante
 

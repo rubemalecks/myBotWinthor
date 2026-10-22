@@ -45,6 +45,7 @@ def listar_filiais_departamento(codigo_departamento, escopo=None):
         FROM PCEST E
         JOIN PCPRODUT P ON P.CODPROD = E.CODPROD
         WHERE P.CODEPTO = :DEPTO
+          AND P.DTEXCLUSAO IS NULL
         ORDER BY E.CODFILIAL
     """, {"DEPTO": int(codigo_departamento)}, escopo, 'E.CODFILIAL', None, 'ORDER BY E.CODFILIAL')
 
@@ -57,6 +58,7 @@ def listar_regioes_ativas(codigo_departamento, escopo=None):
         JOIN PCTABPR T ON T.NUMREGIAO = R.NUMREGIAO
         JOIN PCPRODUT P ON P.CODPROD = T.CODPROD
         WHERE R.STATUS = 'A' AND P.CODEPTO = :DEPTO
+          AND P.DTEXCLUSAO IS NULL
         ORDER BY R.NUMREGIAO
     """, {"DEPTO": int(codigo_departamento)}, escopo, None, 'R.NUMREGIAO', 'ORDER BY R.NUMREGIAO')
 
@@ -76,6 +78,7 @@ def calcular_margens_departamento(codigo_departamento, codigo_filial, regiao=Non
             JOIN PCREGIAO R ON R.NUMREGIAO = T.NUMREGIAO
             JOIN PCEST E ON E.CODPROD = P.CODPROD
             WHERE P.CODEPTO = :DEPTO
+              AND P.DTEXCLUSAO IS NULL
               AND E.CODFILIAL = :FILIAL
               AND R.STATUS = 'A'
               AND (:REGIAO IS NULL OR T.NUMREGIAO = :REGIAO)
@@ -115,7 +118,8 @@ def consultar_margens_departamento_produto(codprod, escopo=None):
         JOIN PCTABPR T ON T.CODPROD = P.CODPROD
         JOIN PCREGIAO R ON R.NUMREGIAO = T.NUMREGIAO
         JOIN PCEST E ON E.CODPROD = P.CODPROD
-        WHERE P.CODEPTO = (SELECT CODEPTO FROM PCPRODUT WHERE CODPROD = :CODPROD)
+        WHERE P.CODEPTO = (SELECT CODEPTO FROM PCPRODUT WHERE CODPROD = :CODPROD AND DTEXCLUSAO IS NULL)
+          AND P.DTEXCLUSAO IS NULL
           AND R.STATUS = 'A'
           AND T.PVENDA > 0 AND E.CUSTOULTENT IS NOT NULL
           AND EXISTS (SELECT 1 FROM PCTABPR TP

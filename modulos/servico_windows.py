@@ -60,11 +60,15 @@ def obter_status_servico():
         win32service.SERVICE_PAUSE_PENDING: "stopping",
         win32service.SERVICE_PAUSED: "stopped",
     }
+    comando = configuracao[3].strip()
+    executavel = comando.split('"', 2)[1] if comando.startswith('"') else comando.split(' ', 1)[0]
     return {
         "available": True,
         "installed": True,
         "state": estados.get(status[1], "unknown"),
         "automatic": configuracao[1] == win32service.SERVICE_AUTO_START,
+        "binary_path": executavel,
+        "binary_exists": Path(executavel).is_file(),
     }
 
 

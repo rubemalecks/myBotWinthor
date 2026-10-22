@@ -1,6 +1,7 @@
 """Hospeda bot.py como serviço do Windows."""
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 import servicemanager
@@ -33,11 +34,13 @@ class BotWindowsService(win32serviceutil.ServiceFramework):
     def SvcDoRun(self):
         servicemanager.LogInfoMsg("Iniciando o bot WinThor.")
         python = PYTHON if PYTHON.is_file() else Path(sys.executable)
+        ambiente = {**os.environ, 'PYTHONUTF8': '1', 'PYTHONUNBUFFERED': '1'}
         try:
             with LOG_FILE.open("a", encoding="utf-8") as log:
                 self.process = subprocess.Popen(
-                    [str(python), str(BOT_SCRIPT)],
+                    [str(python), '-u', str(BOT_SCRIPT)],
                     cwd=BASE_DIR,
+                    env=ambiente,
                     stdin=subprocess.DEVNULL,
                     stdout=log,
                     stderr=subprocess.STDOUT,

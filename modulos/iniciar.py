@@ -1,6 +1,5 @@
 """Inicia o serviço ou a execução manual e abre o painel quando disponível."""
 import json
-import os
 import subprocess
 import sys
 import time
@@ -11,6 +10,7 @@ from urllib.request import ProxyHandler, build_opener
 from modulos.permissoes import BASE_DIR, obter_configuracao
 from modulos.rede import enderecos_painel
 from modulos.servico_windows import SERVICE_NAME, obter_status_servico
+from modulos.banner import mostrar_banner
 
 
 def painel_disponivel(url):
@@ -25,6 +25,15 @@ def painel_disponivel(url):
 def _iniciar_servico_windows():
     import win32serviceutil
     win32serviceutil.StartService(SERVICE_NAME)
+
+
+def orientar_reparo_servico(caminho=None):
+    if caminho:
+        print(f'Arquivo do serviço não encontrado: {caminho}')
+    print('O registro do serviço precisa ser reparado usando o ambiente atual do projeto.')
+    print('Abra o PowerShell como administrador na pasta do projeto e execute:')
+    print('  .\\.venv\\Scripts\\python.exe service_helper.py install')
+    print('Depois, execute iniciar.bat novamente.')
 
 
 def aguardar_processo(processo):
@@ -54,6 +63,9 @@ def iniciar_e_abrir_painel(abrir_navegador=True):
         try:
             servico = obter_status_servico()
             if servico.get('installed'):
+                if servico.get('binary_exists') is False:
+                    orientar_reparo_servico(servico.get('binary_path'))
+                    return 1
                 if servico.get('state') not in ('running', 'starting', 'start_pending'):
                     print('Iniciando o serviço Windows...')
                     _iniciar_servico_windows()
@@ -63,8 +75,18 @@ def iniciar_e_abrir_painel(abrir_navegador=True):
                 print('Serviço Windows não instalado. Iniciando bot e API neste terminal...')
                 processo = subprocess.Popen([sys.executable, str(BASE_DIR / 'bot.py')], cwd=BASE_DIR)
         except Exception as erro:
-            print(f'Não foi possível iniciar ({type(erro).__name__}). '
-                  'Confira o serviço e as permissões; para iniciar um serviço protegido, execute o BAT como administrador.')
+            codigo = getattr(erro, 'winerror', None)
+            detalhe = getattr(erro, 'strerror', None)
+            print(f'Não foi possível iniciar: erro Windows {codigo} — {detalhe or type(erro).__name__}.'
+                  if codigo is not None else f'Não foi possível iniciar ({type(erro).__name__}). Confira o serviço e as configurações.')
+            if codigo in (2, 3):
+                orientar_reparo_servico()
+            elif codigo == 5:
+                print('Acesso negado. Execute iniciar.bat como administrador para iniciar o serviço.')
+            elif codigo == 1058:
+                print('O serviço está desativado. Ative a inicialização automática na guia Bot do painel ou reinstale o serviço.')
+            elif codigo is not None:
+                print('Confira a configuração do serviço e os eventos do Windows para esse código de erro.')
             return 1
         limite = time.monotonic() + 30
         while time.monotonic() < limite:
@@ -112,10 +134,7 @@ def main():
 
 
 if __name__ == '__main__':
-    if os.name == 'nt':
-        banner = BASE_DIR / 'myBotWinthor.bat'
-        if banner.is_file():
-            subprocess.run(['cmd.exe', '/d', '/c', str(banner), '/nopause'], cwd=BASE_DIR, check=False)
+    mostrar_banner()
     codigo_saida = main()
     if codigo_saida and '--manter-aberto' in sys.argv:
         try:

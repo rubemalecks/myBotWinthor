@@ -3,6 +3,7 @@ import ctypes
 import sys
 import time
 import traceback
+from pathlib import Path
 
 import win32service
 import win32serviceutil
@@ -60,6 +61,9 @@ def executar(acao):
                 "Não encontrei .venv\\Lib\\site-packages. Instale as dependências "
                 "do projeto antes de ativar o serviço."
             )
+        executavel = win32serviceutil.LocatePythonServiceExe()
+        if not executavel or not Path(executavel).is_file():
+            raise RuntimeError('O executável pythonservice.exe não foi localizado. Reinstale o pywin32 na .venv e tente novamente.')
         SERVICE_PTH.write_text(str(BASE_DIR) + "\n", encoding="utf-8")
         try:
             win32serviceutil.QueryServiceStatus(SERVICE_NAME)
@@ -73,7 +77,7 @@ def executar(acao):
                     SERVICE_NAME,
                     SERVICE_DISPLAY_NAME,
                     startType=win32service.SERVICE_AUTO_START,
-                    exeName=win32serviceutil.LocatePythonServiceExe(),
+                    exeName=executavel,
                     description=SERVICE_DESCRIPTION,
                 )
             except Exception:
@@ -84,7 +88,7 @@ def executar(acao):
                 "bot_service.BotWindowsService",
                 SERVICE_NAME,
                 startType=win32service.SERVICE_AUTO_START,
-                exeName=win32serviceutil.LocatePythonServiceExe(),
+                exeName=executavel,
                 description=SERVICE_DESCRIPTION,
             )
         return "Serviço instalado para iniciar automaticamente no próximo boot."

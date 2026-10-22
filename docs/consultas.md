@@ -4,11 +4,13 @@ Esta seção descreve o comportamento implementado em [database.py](../modulos/d
 
 As consultas Oracle são somente de leitura e usam os nomes das tabelas **sem prefixo de esquema**. O usuário configurado precisa ter acesso às tabelas diretamente ou por sinônimos. Parâmetros são enviados por bind, como `:CODPROD`, sem concatenar o texto digitado ao SQL. Os nomes dos campos da busca por código são escolhidos de uma lista fixa permitida. `executar_consulta` abre uma conexão, executa o SELECT e devolve os registros como dicionários com chaves em minúsculas.
 
+**Exclusão de produtos:** consultas que retornam produtos, custos, filiais/regiões de departamento ou agregações exigem `P.DTEXCLUSAO IS NULL`, sendo `P` o alias de `PCPRODUT`. Data preenchida exclui o produto das buscas e de todos os totais/contagens do departamento. A verificação `produto_existe` usa o mesmo filtro, para não confundir produto excluído com produto apenas sem preço. O catálogo administrativo de todas as filiais/tabelas e o cadastro `PCDEPTO` não são filtrados por essa regra.
+
 ### Mapa das tabelas
 
 | Tabela | Campos utilizados | Finalidade |
 |---|---|---|
-| `PCPRODUT` | `CODPROD`, `DESCRICAO`, `CODAUXILIAR`, `CODAUXILIAR2`, `CODEPTO` | Identificação, descrição, códigos de busca e departamento do produto. |
+| `PCPRODUT` | `CODPROD`, `DESCRICAO`, `CODAUXILIAR`, `CODAUXILIAR2`, `CODEPTO`, `DTEXCLUSAO` | Identificação, descrição, códigos de busca, departamento e exclusão do produto. |
 | `PCTABPR` | `CODPROD`, `NUMREGIAO`, `PVENDA`, `PTABELA` | Preço de venda e preço programado por região/tabela. |
 | `PCREGIAO` | `NUMREGIAO`, `REGIAO`, `STATUS` | Nome e situação da região/tabela de preços. |
 | `PCEST` | `CODPROD`, `CODFILIAL`, `CUSTOREAL`, `CUSTOULTENT`, `DTULTENT` | Custos e data da última entrada por filial. |
@@ -42,6 +44,7 @@ WHERE (
     OR P.CODAUXILIAR2 = :CODAUXILIAR2
 )
 AND R.STATUS = 'A'
+AND P.DTEXCLUSAO IS NULL
 ORDER BY R.NUMREGIAO
 ```
 
@@ -71,6 +74,7 @@ Exige `consulta_preco` e pelo menos três caracteres. Usa os mesmos JOINs de `PC
 
 ```sql
 R.STATUS = 'A'
+AND P.DTEXCLUSAO IS NULL
 AND UPPER(P.DESCRICAO) LIKE :NOME
 ```
 
@@ -135,6 +139,7 @@ JOIN PCTABPR T ON T.CODPROD = P.CODPROD
 JOIN PCREGIAO R ON R.NUMREGIAO = T.NUMREGIAO
 JOIN PCEST E ON E.CODPROD = P.CODPROD
 WHERE P.CODEPTO = :DEPTO
+  AND P.DTEXCLUSAO IS NULL
   AND E.CODFILIAL = :FILIAL
   AND R.STATUS = 'A'
   AND (:REGIAO IS NULL OR T.NUMREGIAO = :REGIAO)

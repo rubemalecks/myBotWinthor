@@ -1000,7 +1000,13 @@ PAGINA = """<!doctype html>
       const enable = document.querySelector("#enable-windows-service");
       const disable = document.querySelector("#disable-windows-service");
       const remove = document.querySelector("#remove-windows-service");
-      if (!response.installed) {
+      if (response.installed && response.binary_exists === false) {
+        status.textContent = "O executável registrado no serviço não existe. Clique em Reparar e confirme a solicitação administrativa.";
+        enable.hidden = false;
+        enable.textContent = "Reparar inicialização automática";
+        disable.hidden = true;
+        remove.hidden = false;
+      } else if (!response.installed) {
         status.textContent = "Serviço ainda não instalado.";
         enable.hidden = false;
         enable.textContent = "Ativar inicialização automática";

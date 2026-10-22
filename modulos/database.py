@@ -147,6 +147,7 @@ def _montar_consulta_produto(codigo, campos=None, escopo=None):
 
         WHERE ({condicoes})
 
+        AND P.DTEXCLUSAO IS NULL
         AND R.STATUS = 'A'
 
         ORDER BY R.NUMREGIAO
@@ -230,6 +231,7 @@ def consultar_custos(codprod, escopo=None):
             ON F.CODFORNEC = U.CODFORNEC
 
         WHERE P.CODPROD = :CODPROD_PRINCIPAL
+          AND P.DTEXCLUSAO IS NULL
 
         ORDER BY E.CODFILIAL
     """
@@ -252,6 +254,7 @@ def pesquisar_produtos(nome, escopo=None):
             INNER JOIN PCREGIAO R
                 ON R.NUMREGIAO = T.NUMREGIAO
             WHERE R.STATUS = 'A'
+              AND P.DTEXCLUSAO IS NULL
               AND UPPER(P.DESCRICAO)
                   LIKE :NOME
             ORDER BY P.DESCRICAO, P.CODPROD
@@ -266,7 +269,7 @@ def pesquisar_produtos(nome, escopo=None):
 
 def listar_filiais_produto(codprod, escopo=None):
     params = {'CODPROD': int(codprod)}
-    sql = 'SELECT DISTINCT E.CODFILIAL FROM PCEST E JOIN PCPRODUT P ON P.CODPROD=E.CODPROD WHERE P.CODPROD=:CODPROD'
+    sql = 'SELECT DISTINCT E.CODFILIAL FROM PCEST E JOIN PCPRODUT P ON P.CODPROD=E.CODPROD WHERE P.CODPROD=:CODPROD AND P.DTEXCLUSAO IS NULL'
     sql += filtros_escopo(escopo, params, filial='E.CODFILIAL', regiao=False)
     return executar_consulta(sql + ' ORDER BY E.CODFILIAL', params)
 
@@ -291,7 +294,7 @@ def produto_existe(codigo, campos, escopo=None):
         raise ValueError("Campos inv?lidos.")
     params = {"CODIGO": int(codigo)}
     condicao = ' OR '.join(permitidos[campo] + ' = :CODIGO' for campo in campos)
-    sql = 'SELECT P.CODPROD FROM PCPRODUT P WHERE (' + condicao + ')'
+    sql = 'SELECT P.CODPROD FROM PCPRODUT P WHERE (' + condicao + ') AND P.DTEXCLUSAO IS NULL'
     # N?o filtra pre?o ou regi?o: diferencia produto inexistente de produto sem pre?o permitido.
     sql += filtros_escopo(escopo, params, regiao=False)
     sql += ' AND ROWNUM = 1'
