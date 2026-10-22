@@ -116,4 +116,10 @@ if __name__ == '__main__':
         banner = BASE_DIR / 'myBotWinthor.bat'
         if banner.is_file():
             subprocess.run(['cmd.exe', '/d', '/c', str(banner), '/nopause'], cwd=BASE_DIR, check=False)
-    raise SystemExit(main())
+    codigo_saida = main()
+    if codigo_saida and '--manter-aberto' in sys.argv:
+        try:
+            input('Falha na inicialização. Confira a mensagem acima e pressione Enter para fechar...')
+        except (EOFError, KeyboardInterrupt):
+            pass
+    raise SystemExit(codigo_saida)

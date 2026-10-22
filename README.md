@@ -85,6 +85,10 @@ Ao escolher **0 — Sair**, o configurador pergunta se deseja iniciar o serviço
 
 **Depois de salvar ou alterar o token, pare e inicie o projeto novamente.** Token e senha Oracle vazios mantêm os valores salvos.
 
+O **ID do administrador informado na guia Bot é pré-cadastrado automaticamente com todas as permissões**, sem precisar cadastrar esse usuário na lista ou criar um perfil de teste. Use o ID numérico retornado por `/meuid`, não o número de telefone.
+
+Se o painel responder, mas o bot não receber mensagens, confirme o token e reinicie depois de salvá-lo. No terminal, cada atualização recebida gera um registro `CONSULTA` com `consulta: telegram` e `etapa: RECEBIDO`. Um conflito de polling indica que outra instância usa o mesmo token: pare a execução antiga, inclusive em outro computador. `TELEGRAM: OK` verifica o acesso à API, não garante que o polling esteja ativo. Ao iniciar pelo BAT, erros mantêm a janela aberta para leitura.
+
 Os indicadores mostram **OK verde** ou **OFF vermelho**. Clique para verificar novamente. O teste Oracle verifica conexão e acesso à consulta de produtos; custos e departamentos dependem de outras tabelas.
 
 Para iniciar com o Windows, use **Inicialização automática do Windows**, na guia Bot. Não execute outra instância manual enquanto o serviço estiver ativo.

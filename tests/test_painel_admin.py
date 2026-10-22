@@ -75,6 +75,14 @@ class PainelAdminTests(unittest.TestCase):
         resposta = cliente.get("/api/users")
         self.assertEqual(resposta.status_code, 401)
 
+    def test_id_do_admin_nao_cria_perfil_de_teste(self):
+        resposta = self.client.post('/api/users', headers={'X-CSRF-Token': self.csrf},
+                                   json={'telegram_id': '999', 'nome': 'Administrador'})
+        self.assertEqual(resposta.status_code, 201)
+        self.assertTrue(resposta.json()['administrador'])
+        self.assertTrue(all(resposta.json()[chave] for chave in permissoes.PERMISSOES))
+        self.assertEqual(permissoes.listar_perfis_teste()['profiles'], [])
+
     def test_modelos_perfil_crud_e_permissoes(self):
         headers = {'X-CSRF-Token': self.csrf}
         self.assertEqual(TestClient(app).get('/api/profile-templates').status_code, 401)
@@ -191,8 +199,8 @@ class PainelAdminTests(unittest.TestCase):
 
     def test_remover_perfil_ativo_restaura_admin(self):
         headers = {'X-CSRF-Token': self.csrf}
-        criado = self.client.post('/api/users', headers=headers,
-                                  json={'telegram_id': '999', 'nome': 'Teste'}).json()
+        criado = self.client.post('/api/test-profiles', headers=headers,
+                                  json={'action': 'criar', 'nome': 'Teste'}).json()
         perfil_id = criado['profiles'][0]['id']
         self.client.post('/api/test-profiles', headers=headers,
                          json={'action': 'ativar', 'id': perfil_id})
@@ -238,9 +246,9 @@ class PainelAdminTests(unittest.TestCase):
     def test_perfis_teste_independentes_e_ativacao(self):
         permissoes.registrar_usuario(999, 'Original')
         for nome in ('Consulta', 'Impressao'):
-            resposta = self.client.post('/api/users', headers={'X-CSRF-Token': self.csrf},
-                                       json={'telegram_id': '999', 'nome': nome})
-            self.assertEqual(resposta.status_code, 201)
+            resposta = self.client.post('/api/test-profiles', headers={'X-CSRF-Token': self.csrf},
+                                       json={'action': 'criar', 'nome': nome})
+            self.assertEqual(resposta.status_code, 200)
         self.assertEqual(permissoes.obter_perfil(999)['nome'], 'Original')
         data = self.client.get('/api/test-profiles').json()
         self.assertEqual(len(data['profiles']), 2)

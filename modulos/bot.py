@@ -15,6 +15,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters,
+    TypeHandler,
 )
 
 from modulos.database import consultar_produto, consultar_custos, pesquisar_produtos
@@ -37,6 +38,19 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 # O log HTTP do cliente Telegram inclui a URL com o token do bot.
 logging.getLogger('httpx').setLevel(logging.WARNING)
+
+
+async def registrar_recebimento_telegram(update, context):
+    registrar_consulta_log(update, 'telegram', 'RECEBIDO',
+                           formato='botao' if update.callback_query else 'mensagem')
+
+
+async def erro_telegram(update, context):
+    from telegram.error import Conflict
+    if isinstance(context.error, Conflict):
+        logger.error('Telegram: conflito no recebimento. Pare outras instâncias que usam o mesmo token, inclusive em outro computador.')
+    else:
+        logger.error('Falha no recebimento do Telegram (%s). Confira internet, token e os logs de inicialização.', type(context.error).__name__)
 
 
 def registrar_consulta_log(update, tipo, etapa, **detalhes):
@@ -752,6 +766,47 @@ async def cancelar_margem(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ==========================================
+def executar_bot_telegram(token):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        app = ApplicationBuilder().token(token).build()
+        app.add_handler(TypeHandler(Update, registrar_recebimento_telegram), group=-1)
+        app.add_error_handler(erro_telegram)
+        privado = filters.ChatType.PRIVATE
+        app.add_handler(CommandHandler('start', iniciar, filters=privado))
+        app.add_handler(CommandHandler('ajuda', ajuda, filters=privado))
+        app.add_handler(CommandHandler('comandos', comandos, filters=privado))
+        app.add_handler(CommandHandler('meuid', meu_id, filters=privado))
+        app.add_handler(CommandHandler('margem', comando_margem, filters=privado))
+        app.add_handler(CommandHandler('cancelarmargem', cancelar_margem, filters=privado))
+        app.add_handler(CallbackQueryHandler(
+            clique_margem, pattern=r'^(mgd|mgf|mgmodo|mgr):'
+        ))
+        app.add_handler(CallbackQueryHandler(
+            selecionar_produto, pattern=r'^produto:[0-9]+$'
+        ))
+        app.add_handler(MessageHandler(
+            privado & (filters.PHOTO | filters.Document.IMAGE),
+            consultar_por_foto,
+        ))
+        app.add_handler(MessageHandler(
+            privado & filters.TEXT & ~filters.COMMAND, consultar
+        ))
+        logger.info(
+            'Iniciando recebimento do Telegram (polling). Cada mensagem recebida gerará um log TELEGRAM/RECEBIDO.'
+        )
+        app.run_polling(stop_signals=None)
+    except Exception:
+        logger.exception(
+            'O bot do Telegram não iniciou. O painel continua ativo; '
+            'corrija as configurações e reinicie o serviço.'
+        )
+    finally:
+        if not loop.is_closed():
+            loop.close()
+
+
 def main():
     inicializar()
     from modulos.painel_admin import iniciar_painel, obter_url_acesso
@@ -772,41 +827,9 @@ def main():
     thread_bot = None
 
     if token:
-        def executar_bot():
-            try:
-                app = ApplicationBuilder().token(token).build()
-                privado = filters.ChatType.PRIVATE
-                app.add_handler(CommandHandler('start', iniciar, filters=privado))
-                app.add_handler(CommandHandler('ajuda', ajuda, filters=privado))
-                app.add_handler(CommandHandler('comandos', comandos, filters=privado))
-                app.add_handler(CommandHandler('meuid', meu_id, filters=privado))
-                app.add_handler(CommandHandler('margem', comando_margem, filters=privado))
-                app.add_handler(CommandHandler('cancelarmargem', cancelar_margem, filters=privado))
-                app.add_handler(CallbackQueryHandler(
-                    clique_margem, pattern=r'^(mgd|mgf|mgmodo|mgr):'
-                ))
-                app.add_handler(CallbackQueryHandler(
-                    selecionar_produto, pattern=r'^produto:[0-9]+$'
-                ))
-                app.add_handler(MessageHandler(
-                    privado & (filters.PHOTO | filters.Document.IMAGE),
-                    consultar_por_foto,
-                ))
-                app.add_handler(MessageHandler(
-                    privado & filters.TEXT & ~filters.COMMAND, consultar
-                ))
-                logger.info(
-                    'Bot WinThor iniciado: CODPROD, CODAUXILIAR, CODAUXILIAR2 e foto.'
-                )
-                app.run_polling(stop_signals=None)
-            except Exception:
-                logger.exception(
-                    'O bot do Telegram não iniciou. O painel continua ativo; '
-                    'corrija as configurações e reinicie o serviço.'
-                )
 
         thread_bot = threading.Thread(
-            target=executar_bot, name='bot-telegram', daemon=True
+            target=executar_bot_telegram, args=(token,), name='bot-telegram', daemon=True
         )
         thread_bot.start()
     else:

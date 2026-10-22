@@ -315,6 +315,19 @@ def inicializar():
         else:
             _gravar_arquivo(_migrar_sqlite_legado())
 
+        garantir_administrador()
+
+
+def garantir_administrador():
+    """Pré-cadastra o administrador real com acesso total."""
+    admin_id = obter_configuracao()['TELEGRAM_ADMIN_ID'].strip()
+    if admin_id.isascii() and admin_id.isdecimal() and int(admin_id) > 0:
+        existente = obter_perfil(int(admin_id))
+        if existente and existente.get('aprovado') and all(existente.get(chave) for chave in PERMISSOES):
+            return existente
+        return registrar_usuario(int(admin_id))
+    return None
+
 
 def obter_ou_criar_configuracao(chave, valor_padrao):
     if chave not in CHAVES_CONFIGURACAO:
@@ -369,6 +382,8 @@ def salvar_configuracoes(configuracoes):
             admin = dados["admin"]
             admin["versao_sessao"] = int(admin.get("versao_sessao", 1)) + 1
         _gravar_arquivo(dados)
+        if 'TELEGRAM_ADMIN_ID' in configuracoes:
+            garantir_administrador()
 
 
 def _gerar_hash_senha(senha):

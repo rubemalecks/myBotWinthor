@@ -31,6 +31,7 @@ from modulos.permissoes import (
     gerenciar_perfil_teste,
     listar_perfis_teste,
     gerenciar_modelo_perfil,
+    garantir_administrador,
     revogar,
     obter_configuracao,
     obter_ou_criar_configuracao,
@@ -312,7 +313,7 @@ PAGINA = """<!doctype html>
       <button id="refresh-users" type="button" class="secondary">Atualizar usuários</button>
       <section class="card">
         <h2>Acesso do administrador</h2>
-        <p class="muted compact-help">Cadastre novamente seu ID com um nome para criar um perfil independente e configurar suas permissões.</p>
+        <p class="muted compact-help">O ID informado na guia Bot é pré-cadastrado com todas as permissões. Não é necessário cadastrá-lo novamente. Perfis de teste antigos são independentes desse cadastro.</p>
         <button id="restore-admin" type="button" class="secondary">Usar acesso total do administrador</button>
         <p id="test-profile-status" role="status"></p>
       </section>
@@ -694,14 +695,14 @@ PAGINA = """<!doctype html>
       const button = form.querySelector('button[type="submit"]');
       button.disabled = true;
       try {
-        await request("/api/users", { method: "POST", body: JSON.stringify({
+        const result = await request("/api/users", { method: "POST", body: JSON.stringify({
           telegram_id: telegramId,
           nome: document.querySelector("#new-user-name").value.trim()
         }) });
         form.reset();
         await carregarUsuarios();
-        status.textContent = telegramId === configuracaoAtual.TELEGRAM_ADMIN_ID
-          ? "Novo perfil criado. Marque as permissões e salve."
+        status.textContent = result.administrador
+          ? "Administrador principal cadastrado com todas as permissões. Nenhum perfil de teste foi criado."
           : "Perfil cadastrado. Configure o acesso e salve o perfil.";
       } catch (error) { status.textContent = error.message; }
       finally { button.disabled = false; }
@@ -1361,6 +1362,7 @@ async def mudar_senha(request: Request):
 @app.get("/api/users")
 def usuarios(request: Request):
     _exigir_admin(request)
+    garantir_administrador()
     return [
         {**perfil, "administrador": eh_admin(perfil["telegram_id"])}
         for perfil in listar_perfis()
@@ -1387,9 +1389,7 @@ async def criar_usuario(request: Request):
     if not eh_admin(int(texto)) and any(p["telegram_id"] == int(texto) for p in listar_perfis()):
         raise HTTPException(status_code=409, detail="Este usuário já está cadastrado. Edite o perfil na lista.")
     if eh_admin(int(texto)):
-        if not nome.strip():
-            raise HTTPException(status_code=400, detail="Informe um nome para o novo perfil de teste.")
-        return gerenciar_perfil_teste("criar", nome=nome.strip())
+        return {**registrar_usuario(int(texto), nome.strip() or None), 'administrador': True}
     return registrar_usuario(int(texto), nome.strip() or None)
 
 
@@ -1443,8 +1443,13 @@ async def alterar_perfil_teste(request: Request):
     _exigir_csrf(request)
     try:
         dados = await request.json()
-        if not isinstance(dados, dict) or dados.get("action") not in ("salvar", "ativar", "remover"):
+        if not isinstance(dados, dict) or dados.get("action") not in ("criar", "salvar", "ativar", "remover"):
             raise ValueError("Ação inválida.")
+        if dados['action'] == 'criar':
+            nome = dados.get('nome')
+            if not isinstance(nome, str) or not nome.strip() or len(nome) > 128:
+                raise ValueError('Informe o nome do perfil de teste.')
+            return gerenciar_perfil_teste('criar', nome=nome.strip())
         if dados.get("id") is not None and not isinstance(dados["id"], str):
             raise ValueError("Perfil inválido.")
         return gerenciar_perfil_teste(dados["action"], perfil_id=dados.get("id"), permissoes=dados.get("permissions"))

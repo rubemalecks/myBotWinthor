@@ -5,7 +5,7 @@ title myBotWinthor - Iniciar API
 pushd "%~dp0"
 if not exist ".venv\Scripts\python.exe" goto sem_ambiente
 rem Executa em terminal próprio, sem um BAT aguardando Ctrl+C.
-start "myBotWinthor - API" /d "%~dp0" "%~dp0.venv\Scripts\python.exe" -m modulos.iniciar
+start "myBotWinthor - API" /d "%~dp0" "%~dp0.venv\Scripts\python.exe" -m modulos.iniciar --manter-aberto
 set "iniciar_exit_code=%errorlevel%"
 popd
 exit /b %iniciar_exit_code%

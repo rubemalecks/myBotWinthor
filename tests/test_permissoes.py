@@ -102,6 +102,18 @@ class PermissoesTests(unittest.TestCase):
             permissoes.atualizar_perfil(999, {"aprovado": False})
         self.assertTrue(permissoes.tem_permissao(999, "ver_custos"))
 
+    def test_administrador_e_pre_cadastrado_sem_precisar_iniciar_telegram(self):
+        perfil = permissoes.obter_perfil(999)
+        self.assertTrue(perfil['aprovado'])
+        self.assertTrue(all(perfil[chave] for chave in permissoes.PERMISSOES))
+        self.assertEqual(permissoes.listar_perfis_teste()['profiles'], [])
+
+    def test_salvar_novo_id_administrador_cadastra_com_acesso_total(self):
+        permissoes.salvar_configuracoes({'TELEGRAM_ADMIN_ID': '456'})
+        perfil = permissoes.obter_perfil(456)
+        self.assertTrue(perfil['aprovado'])
+        self.assertTrue(all(perfil[chave] for chave in permissoes.PERMISSOES))
+
     def test_preco_programado_exige_permissao_especifica(self):
         permissoes.registrar_usuario(123)
         permissoes.atualizar_perfil(123, {'aprovado': True, 'consulta_preco': True})
@@ -249,7 +261,7 @@ class PermissoesTests(unittest.TestCase):
         dados = json.loads(
             permissoes.ARQUIVO_DADOS.read_text(encoding="utf-8")
         )
-        self.assertEqual(len(dados["usuarios"]), 20)
+        self.assertEqual(len(dados["usuarios"]), 21)  # 20 usuários + administrador pré-cadastrado
 
 
 if __name__ == "__main__":
