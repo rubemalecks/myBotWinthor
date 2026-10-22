@@ -6,6 +6,7 @@ from threading import Lock
 import oracledb
 from dotenv import load_dotenv
 from modulos.permissoes import obter_configuracao
+from modulos.escopo import filtros_escopo
 
 # ==========================================
 # CONFIGURAÇÕES ORACLE
@@ -114,7 +115,7 @@ def executar_consulta(sql, parametros):
 # CONSULTA DE PREÇOS
 # ==========================================
 
-def _montar_consulta_produto(codigo, campos=None):
+def _montar_consulta_produto(codigo, campos=None, escopo=None):
     campos_validos = {
         "codprod": "P.CODPROD",
         "codauxiliar": "P.CODAUXILIAR",
@@ -152,11 +153,12 @@ def _montar_consulta_produto(codigo, campos=None):
     """.format(condicoes=condicoes)
 
     parametros = {campo.upper(): int(codigo) for campo in campos}
+    sql = sql.replace("ORDER BY R.NUMREGIAO", "AND T.PVENDA > 0 " + filtros_escopo(escopo, parametros, regiao="T.NUMREGIAO") + " ORDER BY R.NUMREGIAO")
     return sql, parametros
 
 
-def consultar_produto(codigo, campos=None):
-    sql, parametros = _montar_consulta_produto(codigo, campos)
+def consultar_produto(codigo, campos=None, escopo=None):
+    sql, parametros = _montar_consulta_produto(codigo, campos, escopo)
     return executar_consulta(sql, parametros)
 
 
@@ -164,7 +166,7 @@ def consultar_produto(codigo, campos=None):
 # CONSULTA RESTRITA DE CUSTOS
 # ==========================================
 
-def consultar_custos(codprod):
+def consultar_custos(codprod, escopo=None):
     sql = """
         WITH ULTIMA_NF AS (
             SELECT
@@ -232,16 +234,12 @@ def consultar_custos(codprod):
         ORDER BY E.CODFILIAL
     """
 
-    return executar_consulta(
-        sql,
-        {
-            "CODPROD_CTE": int(codprod),
-            "CODPROD_PRINCIPAL": int(codprod),
-        }
-    )
+    params = {"CODPROD_CTE": int(codprod), "CODPROD_PRINCIPAL": int(codprod)}
+    sql = sql.replace('ORDER BY E.CODFILIAL', filtros_escopo(escopo, params, filial='E.CODFILIAL', regiao=False) + ' ORDER BY E.CODFILIAL')
+    return executar_consulta(sql, params)
 
 
-def pesquisar_produtos(nome):
+def pesquisar_produtos(nome, escopo=None):
     sql = """
         SELECT CODPROD, DESCRICAO
         FROM (
@@ -261,7 +259,40 @@ def pesquisar_produtos(nome):
         WHERE ROWNUM <= 11
     """
 
-    return executar_consulta(
-        sql,
-        {"NOME": f"%{nome.upper()}%"}
-    )
+    params = {"NOME": f"%{nome.upper()}%"}
+    sql = sql.replace('ORDER BY P.DESCRICAO', filtros_escopo(escopo, params, regiao='T.NUMREGIAO') + ' ORDER BY P.DESCRICAO')
+    return executar_consulta(sql, params)
+
+
+def listar_filiais_produto(codprod, escopo=None):
+    params = {'CODPROD': int(codprod)}
+    sql = 'SELECT DISTINCT E.CODFILIAL FROM PCEST E JOIN PCPRODUT P ON P.CODPROD=E.CODPROD WHERE P.CODPROD=:CODPROD'
+    sql += filtros_escopo(escopo, params, filial='E.CODFILIAL', regiao=False)
+    return executar_consulta(sql + ' ORDER BY E.CODFILIAL', params)
+
+
+def listar_opcoes_acesso():
+    """Catálogo para seleção administrativa, sem consultar preços ou custos."""
+    with conectar(tcp_connect_timeout=5) as conexao:
+        conexao.call_timeout = 5000
+        with conexao.cursor() as cursor:
+            cursor.execute('SELECT DISTINCT CODFILIAL FROM PCEST ORDER BY CODFILIAL')
+            filiais = [{'codigo': str(linha[0]), 'nome': f'Filial {linha[0]}'}
+                       for linha in cursor.fetchall() if linha[0] is not None]
+            cursor.execute('SELECT NUMREGIAO, REGIAO, STATUS FROM PCREGIAO ORDER BY NUMREGIAO')
+            tabelas = [{'codigo': str(linha[0]), 'nome': str(linha[1] or ''),
+                        'ativa': str(linha[2] or '').strip() == 'A'} for linha in cursor.fetchall()]
+    return {'filiais_permitidas': filiais, 'tabelas_permitidas': tabelas}
+
+
+def produto_existe(codigo, campos, escopo=None):
+    permitidos = {"codprod": "P.CODPROD", "codauxiliar": "P.CODAUXILIAR", "codauxiliar2": "P.CODAUXILIAR2"}
+    if not campos or any(campo not in permitidos for campo in campos):
+        raise ValueError("Campos inv?lidos.")
+    params = {"CODIGO": int(codigo)}
+    condicao = ' OR '.join(permitidos[campo] + ' = :CODIGO' for campo in campos)
+    sql = 'SELECT P.CODPROD FROM PCPRODUT P WHERE (' + condicao + ')'
+    # N?o filtra pre?o ou regi?o: diferencia produto inexistente de produto sem pre?o permitido.
+    sql += filtros_escopo(escopo, params, regiao=False)
+    sql += ' AND ROWNUM = 1'
+    return bool(executar_consulta(sql, params))

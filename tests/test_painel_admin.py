@@ -75,6 +75,37 @@ class PainelAdminTests(unittest.TestCase):
         resposta = cliente.get("/api/users")
         self.assertEqual(resposta.status_code, 401)
 
+    def test_catalogo_filiais_regioes_exige_login_e_consulta_oracle(self):
+        self.assertEqual(TestClient(app).get('/api/access-options').status_code, 401)
+        dados = {'filiais_permitidas': [{'codigo': '1', 'nome': 'Filial 1'}],
+                 'tabelas_permitidas': [{'codigo': '2', 'nome': 'VAREJO', 'ativa': True}]}
+        with patch('modulos.painel_admin.listar_opcoes_acesso', return_value=dados):
+            resposta = self.client.get('/api/access-options')
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json(), dados)
+        with patch('modulos.painel_admin.listar_opcoes_acesso', side_effect=RuntimeError('falha')):
+            self.assertEqual(self.client.get('/api/access-options').status_code, 503)
+
+    def test_modelo_propaga_filiais_e_tabelas(self):
+        headers = {'X-CSRF-Token': self.csrf}
+        self.client.get('/api/profile-templates')
+        dados = {'nome': 'Cliente', 'permissoes': {'consulta_preco': True},
+                 'filiais_permitidas': ['1'], 'tabelas_permitidas': ['2']}
+        self.assertEqual(self.client.put('/api/profile-templates/cliente', headers=headers, json=dados).status_code, 200)
+        resposta = self.client.put('/api/users/123', headers=headers,
+            json={'aprovado': True, 'modelo_perfil_id': 'cliente'})
+        self.assertEqual(resposta.json()['filiais_permitidas'], ['1'])
+        self.client.put('/api/profile-templates/cliente', headers=headers,
+            json={'nome': 'Cliente', 'permissoes': {'consulta_preco': True}})
+        self.assertEqual(permissoes.obter_perfil(123)['filiais_permitidas'], ['1'])
+        self.assertEqual(permissoes.obter_perfil(123)['tabelas_permitidas'], ['2'])
+        dados['tabelas_permitidas'] = []
+        self.client.put('/api/profile-templates/cliente', headers=headers, json=dados)
+        self.assertEqual(permissoes.obter_perfil(123)['tabelas_permitidas'], [])
+        resposta = self.client.put('/api/users/123', headers=headers,
+            json={'modelo_perfil_id': None, 'filiais_permitidas': '1,2'})
+        self.assertEqual(resposta.status_code, 400)
+
     def test_id_do_admin_nao_cria_perfil_de_teste(self):
         resposta = self.client.post('/api/users', headers={'X-CSRF-Token': self.csrf},
                                    json={'telegram_id': '999', 'nome': 'Administrador'})

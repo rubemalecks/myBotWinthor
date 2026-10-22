@@ -5,6 +5,12 @@ Não é lucro realizado, nem leva em conta quantidade em estoque/vendida.
 """
 from decimal import Decimal
 from modulos.database import executar_consulta
+from modulos.escopo import filtros_escopo
+
+def _consultar_escopo(sql, params, escopo, filial, regiao, marcador):
+    sql = sql.replace(marcador, filtros_escopo(escopo, params, filial, regiao) + " " + marcador, 1)
+    return executar_consulta(sql, params)
+
 
 
 def listar_departamentos(termo=None):
@@ -30,30 +36,30 @@ def obter_departamento(codigo):
     return linhas[0] if linhas else None
 
 
-def listar_filiais_departamento(codigo_departamento):
+def listar_filiais_departamento(codigo_departamento, escopo=None):
     """Filiais com registro de estoque de produtos do departamento."""
-    return executar_consulta("""
+    return _consultar_escopo("""
         SELECT DISTINCT E.CODFILIAL
         FROM PCEST E
         JOIN PCPRODUT P ON P.CODPROD = E.CODPROD
         WHERE P.CODEPTO = :DEPTO
         ORDER BY E.CODFILIAL
-    """, {"DEPTO": int(codigo_departamento)})
+    """, {"DEPTO": int(codigo_departamento)}, escopo, 'E.CODFILIAL', None, 'ORDER BY E.CODFILIAL')
 
 
-def listar_regioes_ativas(codigo_departamento):
+def listar_regioes_ativas(codigo_departamento, escopo=None):
     """Somente regiões ativas que tenham preço para o departamento."""
-    return executar_consulta("""
+    return _consultar_escopo("""
         SELECT DISTINCT R.NUMREGIAO, R.REGIAO AS NOME_TABELA
         FROM PCREGIAO R
         JOIN PCTABPR T ON T.NUMREGIAO = R.NUMREGIAO
         JOIN PCPRODUT P ON P.CODPROD = T.CODPROD
         WHERE R.STATUS = 'A' AND P.CODEPTO = :DEPTO
         ORDER BY R.NUMREGIAO
-    """, {"DEPTO": int(codigo_departamento)})
+    """, {"DEPTO": int(codigo_departamento)}, escopo, None, 'R.NUMREGIAO', 'ORDER BY R.NUMREGIAO')
 
 
-def calcular_margens_departamento(codigo_departamento, codigo_filial, regiao=None):
+def calcular_margens_departamento(codigo_departamento, codigo_filial, regiao=None, escopo=None):
     """Uma linha por região; não multiplica custos entre regiões.
 
     Só produtos com PVENDA > 0 e CUSTOULTENT não nulo são somados.
@@ -89,16 +95,16 @@ def calcular_margens_departamento(codigo_departamento, codigo_filial, regiao=Non
         GROUP BY NUMREGIAO, NOME_TABELA
         ORDER BY NUMREGIAO
     """
-    return executar_consulta(sql, {
+    return _consultar_escopo(sql, {
         "DEPTO": int(codigo_departamento),
         "FILIAL": str(codigo_filial),
         "REGIAO": int(regiao) if regiao is not None else None,
-    })
+    }, escopo, 'E.CODFILIAL', 'T.NUMREGIAO', '\n        )')
 
 
-def consultar_margens_departamento_produto(codprod):
+def consultar_margens_departamento_produto(codprod, escopo=None):
     """Margem do mix nas mesmas tabelas e filiais do produto consultado."""
-    return executar_consulta("""
+    return _consultar_escopo("""
         SELECT P.CODEPTO, E.CODFILIAL, T.NUMREGIAO, R.REGIAO AS NOME_TABELA,
                SUM(T.PVENDA) AS TOTAL_PRECOS,
                SUM(E.CUSTOULTENT) AS TOTAL_CUSTOS,
@@ -116,7 +122,7 @@ def consultar_margens_departamento_produto(codprod):
                       WHERE EP.CODPROD = :CODPROD AND EP.CODFILIAL = E.CODFILIAL)
         GROUP BY P.CODEPTO, E.CODFILIAL, T.NUMREGIAO, R.REGIAO
         ORDER BY E.CODFILIAL, T.NUMREGIAO
-    """, {"CODPROD": int(codprod)})
+    """, {"CODPROD": int(codprod)}, escopo, 'E.CODFILIAL', 'T.NUMREGIAO', 'GROUP BY')
 
 
 def formatar_relatorio(departamento, filial, linhas, incluir_custos=True):

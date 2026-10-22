@@ -12,6 +12,7 @@ from pathlib import Path
 from contextlib import closing
 
 from dotenv import load_dotenv
+from modulos.escopo import CHAVES_ESCOPO, validar_escopo
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
@@ -27,6 +28,8 @@ ARQUIVO_LEGADO = BASE_DIR / "permissoes.db"
 
 _LOCK = threading.RLock()
 _ITERACOES_SENHA_ADMIN = 310_000
+
+OPCOES_CONSULTA = {'perguntar_filial', 'perguntar_regiao'}
 
 PERMISSOES = (
     "consulta_preco",
@@ -517,7 +520,7 @@ def eh_admin_bot(user_id):
 
 
 def _resolver_vinculo_modelo(dados, alteracoes):
-    alteracoes = dict(alteracoes)
+    alteracoes = validar_escopo(dict(alteracoes))
     if 'modelo_perfil_id' not in alteracoes:
         return alteracoes
     modelo_id = alteracoes['modelo_perfil_id']
@@ -525,7 +528,9 @@ def _resolver_vinculo_modelo(dados, alteracoes):
         return alteracoes
     if not isinstance(modelo_id, str) or modelo_id not in dados.get('modelos_perfil', {}):
         raise ValueError('Modelo de perfil não encontrado.')
-    alteracoes.update(dados['modelos_perfil'][modelo_id]['permissoes'])
+    modelo = dados['modelos_perfil'][modelo_id]
+    alteracoes.update(modelo['permissoes'])
+    alteracoes.update({chave: modelo.get(chave) for chave in CHAVES_ESCOPO})
     return alteracoes
 
 
@@ -543,7 +548,7 @@ def gerenciar_perfil_teste(acao, perfil_id=None, nome=None, permissoes=None):
         elif acao == "salvar":
             if perfil_id not in perfis:
                 raise ValueError("Perfil não encontrado.")
-            if not isinstance(permissoes, dict) or not permissoes or not set(permissoes).issubset({"aprovado", "modelo_perfil_id", *PERMISSOES}) or any(type(v) is not bool for k, v in permissoes.items() if k != 'modelo_perfil_id'):
+            if not isinstance(permissoes, dict) or not permissoes or not set(permissoes).issubset({"aprovado", "modelo_perfil_id", *CHAVES_ESCOPO, *OPCOES_CONSULTA, *PERMISSOES}) or any(type(v) is not bool for k, v in permissoes.items() if k not in CHAVES_ESCOPO | {'modelo_perfil_id'}):
                 raise ValueError("Permissões inválidas.")
             permissoes = _resolver_vinculo_modelo(dados, permissoes)
             perfis[perfil_id].update(permissoes)
@@ -565,35 +570,37 @@ def gerenciar_perfil_teste(acao, perfil_id=None, nome=None, permissoes=None):
         return {"profiles": list(perfis.values()), "active": dados.get("perfil_teste_ativo")}
 
 
-def gerenciar_modelo_perfil(acao='listar', modelo_id=None, nome=None, permissoes=None):
+def gerenciar_modelo_perfil(acao='listar', modelo_id=None, nome=None, permissoes=None, escopo=None):
     with _LOCK:
         dados = _carregar_arquivo()
         if 'modelos_perfil' not in dados:
             dados['modelos_perfil'] = {
                 'funcionario': {'id': 'funcionario', 'nome': 'Funcionário', 'permissoes': {
-                    chave: chave in ('consulta_preco', 'buscar_por_foto', 'buscar_codprod', 'buscar_codauxiliar', 'buscar_codauxiliar2') for chave in PERMISSOES}},
+                    chave: chave in ('consulta_preco', 'buscar_por_foto', 'buscar_codprod', 'buscar_codauxiliar', 'buscar_codauxiliar2') for chave in (*PERMISSOES, *OPCOES_CONSULTA)}},
                 'cliente': {'id': 'cliente', 'nome': 'Cliente', 'permissoes': {
-                    chave: chave in ('consulta_preco', 'buscar_codauxiliar', 'buscar_codauxiliar2') for chave in PERMISSOES}},
+                    chave: chave in ('consulta_preco', 'buscar_codauxiliar', 'buscar_codauxiliar2') for chave in (*PERMISSOES, *OPCOES_CONSULTA)}},
             }
             _gravar_arquivo(dados)
         modelos = dados['modelos_perfil']
         if acao in ('criar', 'salvar'):
             if not isinstance(nome, str) or not nome.strip() or len(nome) > 128:
                 raise ValueError('Informe um nome de perfil com até 128 caracteres.')
-            if not isinstance(permissoes, dict) or not set(permissoes).issubset(PERMISSOES) or any(type(v) is not bool for v in permissoes.values()):
+            if not isinstance(permissoes, dict) or not set(permissoes).issubset(set(PERMISSOES) | OPCOES_CONSULTA) or any(type(v) is not bool for v in permissoes.values()):
                 raise ValueError('Permissões do modelo inválidas.')
             if acao == 'salvar' and modelo_id not in modelos:
                 raise ValueError('Modelo não encontrado.')
             if any(m['nome'].casefold() == nome.strip().casefold() and m['id'] != modelo_id for m in modelos.values()):
                 raise ValueError('Já existe um modelo com esse nome.')
             modelo_id = secrets.token_hex(12) if acao == 'criar' else modelo_id
-            modelos[modelo_id] = {'id': modelo_id, 'nome': nome.strip(),
-                                  'permissoes': {chave: permissoes.get(chave, False) for chave in PERMISSOES}}
+            limites = validar_escopo({**{chave: modelos.get(modelo_id, {}).get(chave) for chave in CHAVES_ESCOPO}, **(escopo or {})})
+            modelos[modelo_id] = {**{chave: limites.get(chave) for chave in CHAVES_ESCOPO}, 'id': modelo_id, 'nome': nome.strip(),
+                                  'permissoes': {chave: permissoes.get(chave, False) for chave in (*PERMISSOES, *OPCOES_CONSULTA)}}
             for perfil in [*dados['usuarios'].values(), *dados.get('perfis_teste', {}).values()]:
                 if perfil.get('modelo_perfil_id') == modelo_id:
                     if perfil in dados['usuarios'].values() and eh_admin(perfil['telegram_id']):
                         continue
                     perfil.update(modelos[modelo_id]['permissoes'])
+                    perfil.update({chave: modelos[modelo_id].get(chave) for chave in CHAVES_ESCOPO})
                     if not perfil.get('aprovado'):
                         perfil.update({chave: False for chave in PERMISSOES})
         elif acao == 'remover':
@@ -644,15 +651,15 @@ def atualizar_perfil(user_id, perfil):
     user_id = int(user_id)
     if user_id <= 0:
         raise ValueError("ID inválido.")
-    permitidas = {"aprovado", "modelo_perfil_id", *PERMISSOES}
+    permitidas = {"aprovado", "modelo_perfil_id", *CHAVES_ESCOPO, *OPCOES_CONSULTA, *PERMISSOES}
     if not perfil or not set(perfil).issubset(permitidas):
         raise ValueError("Perfil contém campos inválidos.")
-    if any(not isinstance(valor, bool) for chave, valor in perfil.items() if chave != 'modelo_perfil_id'):
+    if any(not isinstance(valor, bool) for chave, valor in perfil.items() if chave not in CHAVES_ESCOPO | {'modelo_perfil_id'}):
         raise ValueError("As permissões devem ser booleanas.")
     if eh_admin(user_id):
         if perfil.get("aprovado") is False:
             raise ValueError("Não é possível bloquear o administrador principal.")
-        if set(perfil) & (set(PERMISSOES) | {'modelo_perfil_id'}):
+        if set(perfil) & (set(PERMISSOES) | CHAVES_ESCOPO | {'modelo_perfil_id'}):
             raise ValueError("As permissões do administrador principal não podem ser alteradas.")
     with _LOCK:
         dados = _carregar_arquivo()
@@ -760,3 +767,18 @@ def listar_usuarios():
         for perfil in listar_perfis()
         if perfil.get("aprovado")
     ]
+
+
+def obter_escopo_acesso(user_id):
+    teste = perfil_teste_ativo(user_id)
+    if teste is None and eh_admin(user_id):
+        return {}
+    perfil = teste if teste is not None else obter_perfil(user_id) or {}
+    return {chave: perfil.get(chave) for chave in CHAVES_ESCOPO}
+
+
+def obter_opcoes_consulta(user_id):
+    perfil = perfil_teste_ativo(user_id)
+    if perfil is None:
+        perfil = obter_perfil(user_id) or {}
+    return {chave: bool(perfil.get(chave, False)) for chave in OPCOES_CONSULTA}

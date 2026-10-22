@@ -120,6 +120,20 @@ Os modelos iniciais **Funcionário** e **Cliente** liberam consultas de preço; 
 
 **Ver preço programado** também é uma permissão separada. O preço de venda aparece na consulta autorizada; o valor programado (`PTABELA`) só aparece com essa opção habilitada. Para usuários comuns e perfis de teste, ela começa desmarcada; o administrador principal mantém acesso total.
 
+### Filiais e tabelas de preço permitidas
+
+As opções **Perguntar filial na consulta** e **Perguntar região/tabela de preço** fazem o bot pedir a escolha por botões a cada produto consultado, seja por código, nome ou foto. Ative uma ou ambas no usuário ou modelo. No cadastro do administrador, essas opções ficam em **Salvar preferências** e começam desativadas.
+
+Se ambas estiverem ativas, o bot pergunta primeiro a filial e depois a região/tabela. Só aparecem opções autorizadas, e as tabelas precisam ter preço válido para o produto. O resultado e os cálculos usam as escolhas feitas. A seleção expira em 15 minutos, pode ser cancelada e não permite contornar restrições alteradas depois da pergunta. Região e tabela de preço são a mesma seleção (`NUMREGIAO`); escolher filial não cria um preço próprio por filial.
+
+Em cada usuário ou modelo, configure **Filiais e tabelas autorizadas** marcando as caixas das filiais e regiões carregadas do Oracle. Marque **Todas** para acesso sem restrição, incluindo opções futuras; para limitar, desmarque e selecione as opções desejadas. Filial usa `CODFILIAL`; tabela usa `NUMREGIAO` e mostra o nome cadastrado. Sem nenhuma opção marcada, nenhum acesso é permitido nessa categoria. Salve para aplicar. Alterar os limites individualmente remove o vínculo com o modelo; modelos vinculados propagam seus limites aos usuários.
+
+Se o Oracle estiver indisponível, o painel mantém os códigos já salvos como caixas de seleção e informa a falha. Use **Atualizar usuários** para recarregar a lista. Filiais vêm dos registros de `PCEST`; regiões vêm de `PCREGIAO`. Regiões inativas são identificadas e continuam excluídas das consultas de preços.
+
+Preços, custos e margens respeitam esses limites. Os preços continuam regionais (`PCTABPR`); a restrição de filial verifica o registro do produto em `PCEST`, sem exigir estoque positivo. Perfis antigos continuam com acesso a todas as opções até serem limitados; o administrador principal mantém acesso total.
+
+Na consulta de produto, aparecem somente tabelas ativas com **`PVENDA > 0`**. Se houver preço em uma só, apenas ela é mostrada. Se o produto existir nas filiais permitidas, mas não houver preço nas tabelas autorizadas, o bot informa que ele não está precificado nessas tabelas. Produto inexistente tem uma mensagem diferente.
+
 ## 5. Dados e backup — importante
 
 **O Oracle pertence ao cliente.** O projeto consulta esse banco, mas não o cria nem faz backup dele.

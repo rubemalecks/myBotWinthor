@@ -6,6 +6,7 @@ import re
 import sqlite3
 import threading
 import time
+from secrets import token_hex
 from io import BytesIO
 from pathlib import Path
 from decimal import Decimal
@@ -18,7 +19,7 @@ from telegram.ext import (
     TypeHandler,
 )
 
-from modulos.database import consultar_produto, consultar_custos, pesquisar_produtos
+from modulos.database import consultar_produto, consultar_custos, pesquisar_produtos, produto_existe, listar_filiais_produto
 from modulos.leitor_barras import ler_codigo_barras
 from modulos.rede import enderecos_painel
 from modulos.margem_departamento import (
@@ -28,7 +29,7 @@ from modulos.margem_departamento import (
 )
 from modulos.permissoes import (
     inicializar, eh_admin_bot as eh_admin, perfil_teste_ativo, pode_ver_custo, pode_ver_margem_produto, pode_ver_margem_departamento, tem_permissao,
-    obter_configuracao,
+    obter_configuracao, obter_escopo_acesso, obter_opcoes_consulta,
     registrar_usuario as registrar_usuario_perfil,
     autorizar, revogar, listar_usuarios, definir_apelido, identificar_usuario,
 )
@@ -387,7 +388,45 @@ def montar_mensagem_margem_departamento(linhas):
     return mensagem + '\nℹ️ Margem do mix: uma unidade por produto, antes de impostos e outras despesas.\n'
 
 
-async def processar_codigo(update: Update, codigo: str, context=None, origem='manual'):
+async def perguntar_contexto_produto(update, context, codigo, origem, selecoes, tipo, opcoes):
+    token = token_hex(8)
+    context.user_data['selecao_produto'] = {'token': token, 'criado': time.monotonic(),
+        'codigo': codigo, 'origem': origem, 'selecoes': dict(selecoes), 'tipo': tipo, 'opcoes': opcoes}
+    botoes = [[InlineKeyboardButton(rotulo[:64], callback_data=f'pcsel:{token}:{i}')]
+              for i, (valor, rotulo) in enumerate(opcoes)]
+    botoes.append([InlineKeyboardButton('Cancelar consulta', callback_data=f'pcsel:{token}:cancelar')])
+    await update.effective_message.reply_text(
+        '🏢 Qual filial deseja consultar?' if tipo == 'filial' else '📋 Qual região/tabela de preço deseja consultar?',
+        reply_markup=InlineKeyboardMarkup(botoes))
+
+
+async def clique_contexto_produto(update, context):
+    query = update.callback_query
+    if update.effective_chat.type != 'private':
+        await query.answer('Use uma conversa privada.', show_alert=True)
+        return
+    fluxo = context.user_data.get('selecao_produto')
+    partes = query.data.split(':')
+    if not fluxo or len(partes) != 3 or partes[1] != fluxo['token'] or time.monotonic() - fluxo['criado'] > 900:
+        await query.answer('Seleção expirada. Consulte o produto novamente.', show_alert=True)
+        return
+    if partes[2] == 'cancelar':
+        context.user_data.pop('selecao_produto', None)
+        await query.answer('Consulta cancelada.')
+        await query.edit_message_reply_markup(reply_markup=None)
+        return
+    if not partes[2].isdigit() or not 0 <= int(partes[2]) < len(fluxo['opcoes']):
+        await query.answer('Opção inválida.', show_alert=True)
+        return
+    context.user_data.pop('selecao_produto', None)
+    selecoes = dict(fluxo['selecoes'])
+    selecoes[fluxo['tipo']] = fluxo['opcoes'][int(partes[2])][0]
+    await query.answer()
+    await query.edit_message_reply_markup(reply_markup=None)
+    await processar_codigo(update, fluxo['codigo'], context, fluxo['origem'], selecoes)
+
+
+async def processar_codigo(update: Update, codigo: str, context=None, origem='manual', selecoes=None):
     codigo = codigo.strip()
     if not codigo or not codigo.isascii() or not codigo.isdecimal():
         await update.effective_message.reply_text('⚠️ Envie um código numérico válido.')
@@ -395,6 +434,17 @@ async def processar_codigo(update: Update, codigo: str, context=None, origem='ma
     if not await verificar_acesso_consulta(update):
         return
     user_id = update.effective_user.id
+    selecoes = dict(selecoes or {})
+    if context is not None and not selecoes:
+        context.user_data.pop('selecao_produto', None)
+    escopo = obter_escopo_acesso(user_id)
+    for tipo, chave in (('filial', 'filiais_permitidas'), ('regiao', 'tabelas_permitidas')):
+        if tipo in selecoes:
+            valor = str(selecoes[tipo])
+            if escopo.get(chave) is not None and valor not in escopo[chave]:
+                await update.effective_message.reply_text('⛔ Esta opção não está mais autorizada. Consulte novamente.')
+                return
+            escopo[chave] = [valor]
     if origem == 'foto':
         if not await asyncio.to_thread(tem_permissao, user_id, 'consulta_preco') or not await asyncio.to_thread(
             tem_permissao, user_id, 'buscar_por_foto'
@@ -427,23 +477,38 @@ async def processar_codigo(update: Update, codigo: str, context=None, origem='ma
             return
     try:
         produtos = await consultar_com_log(
-            update, 'produto', consultar_produto, codigo, campos_busca,
+            update, 'produto', consultar_produto, codigo, campos_busca, escopo,
             origem=origem, codigo=codigo, campos=list(campos_busca),
             tabelas=['PCPRODUT', 'PCTABPR', 'PCREGIAO'])
         if not produtos:
+            existe = await asyncio.to_thread(produto_existe, codigo, campos_busca, escopo)
             await update.effective_message.reply_text(
-                '❌ PRODUTO NÃO ENCONTRADO\n\n'
-                'Verifique o código ou se existe preço em uma região ativa.'
-            )
+                '⚠️ Produto não está precificado em nenhuma tabela de preço permitida ao seu perfil.'
+                if existe else '❌ Produto não encontrado nas filiais permitidas ao seu perfil.')
+            return
+        preferencias = obter_opcoes_consulta(user_id)
+        if context is not None and preferencias['perguntar_filial'] and 'filial' not in selecoes:
+            filiais = await asyncio.to_thread(listar_filiais_produto, produtos[0]['codprod'], escopo)
+            if not filiais:
+                await update.effective_message.reply_text('Nenhuma filial permitida disponível para este produto.')
+                return
+            await perguntar_contexto_produto(update, context, codigo, origem, selecoes, 'filial',
+                [(str(item['codfilial']), f'Filial {item["codfilial"]}') for item in filiais])
+            return
+        if context is not None and preferencias['perguntar_regiao'] and 'regiao' not in selecoes:
+            opcoes = list({str(item['numregiao']): f'{item["numregiao"]} — {item["nome_tabela"]}' for item in produtos}.items())
+            await perguntar_contexto_produto(update, context, codigo, origem, selecoes, 'regiao', opcoes)
             return
         ver_programado = await asyncio.to_thread(tem_permissao, user_id, 'ver_preco_programado')
         mensagem = montar_mensagem_precos(produtos, incluir_programado=ver_programado)
+        if selecoes:
+            mensagem += '\n' + ('🏢 Filial: ' + selecoes['filial'] + '\n' if 'filial' in selecoes else '')
         ver_custos = await asyncio.to_thread(pode_ver_custo, user_id)
         ver_margem = await asyncio.to_thread(pode_ver_margem_produto, user_id)
         if ver_custos or ver_margem:
             try:
                 custos = await consultar_com_log(
-                    update, 'custos_e_margem_produto', consultar_custos, produtos[0]['codprod'],
+                    update, 'custos_e_margem_produto', consultar_custos, produtos[0]['codprod'], escopo,
                     codprod=produtos[0]['codprod'], exibir_custos=ver_custos, exibir_margem=ver_margem)
                 if ver_custos:
                     mensagem += montar_mensagem_custos(custos, produtos)
@@ -456,7 +521,7 @@ async def processar_codigo(update: Update, codigo: str, context=None, origem='ma
             try:
                 margens_departamento = await consultar_com_log(
                     update, 'margem_departamento_do_produto',
-                    consultar_margens_departamento_produto, produtos[0]['codprod'],
+                    consultar_margens_departamento_produto, produtos[0]['codprod'], escopo,
                     codprod=produtos[0]['codprod'])
                 mensagem += montar_mensagem_margem_departamento(margens_departamento)
             except Exception:
@@ -479,7 +544,7 @@ async def pesquisar_por_nome(update: Update, nome: str):
         await update.effective_message.reply_text('⚠️ Digite pelo menos 3 caracteres para pesquisar pelo nome.')
         return
     try:
-        resultados = await consultar_com_log(update, 'pesquisa_por_nome', pesquisar_produtos, nome,
+        resultados = await consultar_com_log(update, 'pesquisa_por_nome', pesquisar_produtos, nome, obter_escopo_acesso(update.effective_user.id),
                                             termo=nome[:200])
         if not resultados:
             await update.effective_message.reply_text('❌ Nenhum produto encontrado com esse nome.')
@@ -640,7 +705,7 @@ async def escolher_departamento(update, context, termo):
 
 async def selecionar_departamento_margem(update, context, departamento):
     try:
-        filiais = await asyncio.to_thread(listar_filiais_departamento, departamento['codepto'])
+        filiais = await asyncio.to_thread(listar_filiais_departamento, departamento['codepto'], obter_escopo_acesso(update.effective_user.id))
         if not filiais:
             await update.effective_message.reply_text('⚠️ Nenhuma filial com produtos desse departamento.')
             context.user_data.pop('margem_fluxo', None)
@@ -688,7 +753,7 @@ async def executar_margem(update, context, regiao=None):
     try:
         linhas = await consultar_com_log(
             update, 'margem_departamento', calcular_margens_departamento,
-            fluxo['departamento']['codepto'], fluxo['filial'], regiao,
+            fluxo['departamento']['codepto'], fluxo['filial'], regiao, obter_escopo_acesso(update.effective_user.id),
             departamento=fluxo['departamento']['codepto'], filial=fluxo['filial'], regiao=regiao or 'todas',
         )
         incluir_custos = await asyncio.to_thread(pode_ver_custo, update.effective_user.id)
@@ -737,7 +802,7 @@ async def clique_margem(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif valor == 'escolher':
             try:
                 regioes = await asyncio.to_thread(
-                    listar_regioes_ativas, fluxo['departamento']['codepto'])
+                    listar_regioes_ativas, fluxo['departamento']['codepto'], obter_escopo_acesso(update.effective_user.id))
                 if not regioes:
                     await update.effective_message.reply_text('⚠️ Não há tabelas ativas para esse departamento.')
                     return
@@ -773,6 +838,7 @@ def executar_bot_telegram(token):
         app = ApplicationBuilder().token(token).build()
         app.add_handler(TypeHandler(Update, registrar_recebimento_telegram), group=-1)
         app.add_error_handler(erro_telegram)
+        app.add_handler(CallbackQueryHandler(clique_contexto_produto, pattern=r'^pcsel:'))
         privado = filters.ChatType.PRIVATE
         app.add_handler(CommandHandler('start', iniciar, filters=privado))
         app.add_handler(CommandHandler('ajuda', ajuda, filters=privado))

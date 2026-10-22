@@ -17,7 +17,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from telegram import Bot
 from telegram.error import InvalidToken, NetworkError, TelegramError
 
-from modulos.database import ErroAcessoWinthor, testar_conexao_oracle
+from modulos.database import ErroAcessoWinthor, testar_conexao_oracle, listar_opcoes_acesso
+from modulos.escopo import CHAVES_ESCOPO
 from modulos.permissoes import (
     CHAVES_CONFIGURACAO,
     CHAVES_SECRETAS,
@@ -31,7 +32,7 @@ from modulos.permissoes import (
     gerenciar_perfil_teste,
     listar_perfis_teste,
     gerenciar_modelo_perfil,
-    garantir_administrador,
+    garantir_administrador, OPCOES_CONSULTA,
     revogar,
     obter_configuracao,
     obter_ou_criar_configuracao,
@@ -417,6 +418,8 @@ PAGINA = """<!doctype html>
     const permissions = [
       ["consulta_preco", "Consultar preços"],
       ["ver_preco_programado", "Ver preço programado"],
+      ["perguntar_filial", "Perguntar filial na consulta"],
+      ["perguntar_regiao", "Perguntar região/tabela de preço"],
       ["buscar_por_foto", "Buscar por foto"],
       ["buscar_codprod", "Buscar por CODPROD"],
       ["buscar_codauxiliar", "Buscar por CODAUXILIAR"],
@@ -426,6 +429,8 @@ PAGINA = """<!doctype html>
       ["ver_custos", "Ver custos detalhados"]
     ];
     let modelosPerfil = [];
+    let opcoesEscopo = {};
+    let erroOpcoesEscopo = "";
 
     async function request(url, options = {}) {
       const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
@@ -530,10 +535,59 @@ PAGINA = """<!doctype html>
         status.textContent = `Modelo ${modelo.nome} vinculado ao formulário. Salve para confirmar e receber atualizações futuras do modelo.`;
       });
       label.append(select); group.append(label, apply); container.append(group);
-      return () => vinculo;
+      const obter = () => vinculo;
+      obter.desvincular = () => { vinculo = null; select.value = ""; };
+      obter.escopoAplicado = null;
+      apply.addEventListener("click", () => {
+        const modelo = modelosPerfil.find(item => item.id === select.value);
+        if (modelo && obter.escopoAplicado) obter.escopoAplicado(modelo);
+      });
+      return obter;
+    }
+
+    function editarEscopo(container, perfil, aoAlterar = () => {}) {
+      const group = document.createElement("fieldset");
+      const legend = document.createElement("legend"); legend.textContent = "Filiais e tabelas autorizadas"; group.append(legend);
+      const fields = {};
+      for (const [key, title] of [["filiais_permitidas", "filiais"], ["tabelas_permitidas", "tabelas de preço"]]) {
+        const all = criarCampo(group, `Todas as ${title}`, perfil[key] == null);
+        const list = document.createElement("div"); list.className = "row";
+        list.style.cssText = "max-height:220px;overflow:auto;padding:4px";
+        group.append(list);
+        const checks = new Map();
+        function desenhar(valores) {
+          const itens = new Map((opcoesEscopo[key] || []).map(item => [String(item.codigo), item]));
+          for (const codigo of valores || []) {
+            const normalizado = String(codigo);
+            if (!itens.has(normalizado)) itens.set(normalizado, {codigo:normalizado, nome:"Código salvo, ausente na lista atual"});
+          }
+          list.replaceChildren(); checks.clear();
+          for (const [codigo, item] of itens) {
+            const texto = key === "filiais_permitidas" ? `${codigo} — ${item.nome}` : `${codigo} — ${item.nome}${item.ativa === false ? " (inativa)" : ""}`;
+            const input = criarCampo(list, texto, all.checked || (valores || []).map(String).includes(codigo));
+            checks.set(codigo, input);
+            input.addEventListener("change", () => { all.checked = false; aoAlterar(); });
+          }
+          if (!itens.size) {
+            const vazio = document.createElement("small"); vazio.className = "muted";
+            vazio.textContent = erroOpcoesEscopo || "Nenhuma opção cadastrada no Oracle."; list.append(vazio);
+          }
+        }
+        desenhar(perfil[key]);
+        fields[key] = {all, checks, desenhar};
+        all.addEventListener("change", () => { for (const input of checks.values()) input.checked = all.checked; aoAlterar(); });
+      }
+      const note = document.createElement("small"); note.className = "muted";
+      note.textContent = "Marque as filiais e regiões permitidas. Nenhuma marcada bloqueia a categoria; 'Todas' inclui também opções futuras. " + (erroOpcoesEscopo ? "Não foi possível atualizar a lista do Oracle; seleções salvas foram preservadas. Use Atualizar usuários para tentar novamente." : "");
+      group.append(note); container.append(group);
+      const ler = () => Object.fromEntries(Object.entries(fields).map(([key, {all, checks}]) => [key, all.checked ? null : [...checks].filter(([, input]) => input.checked).map(([codigo]) => codigo)]));
+      ler.aplicar = modelo => { for (const [key, field] of Object.entries(fields)) { field.all.checked = modelo[key] == null; field.desenhar(modelo[key]); } };
+      return ler;
     }
 
     async function carregarModelosPerfil() {
+      try { opcoesEscopo = await request("/api/access-options"); erroOpcoesEscopo = ""; }
+      catch (_) { opcoesEscopo = {}; erroOpcoesEscopo = "Lista Oracle indisponível."; }
       modelosPerfil = await request("/api/profile-templates");
       const container = document.querySelector("#profile-templates"); container.replaceChildren();
       for (const modelo of modelosPerfil) {
@@ -545,11 +599,12 @@ PAGINA = """<!doctype html>
         const checks = {};
         for (const [key, text] of permissions) checks[key] = criarCampo(fields, text, modelo.permissoes[key]);
         card.append(heading, label); adicionarMarcarTodos(card, checks); card.append(fields);
+        const lerEscopo = editarEscopo(card, modelo);
         const save = document.createElement("button"); save.type = "button"; save.textContent = "Salvar modelo";
         save.addEventListener("click", async () => {
           save.disabled = true;
           try {
-            await request(`/api/profile-templates/${modelo.id}`, {method:"PUT", body:JSON.stringify({nome:name.value, permissoes:Object.fromEntries(Object.entries(checks).map(([key, input]) => [key, input.checked]))})});
+            await request(`/api/profile-templates/${modelo.id}`, {method:"PUT", body:JSON.stringify({...lerEscopo(), nome:name.value, permissoes:Object.fromEntries(Object.entries(checks).map(([key, input]) => [key, input.checked]))})});
             await carregarModelosPerfil(); status.textContent = "Modelo salvo. Permissões dos usuários vinculados atualizadas automaticamente.";
           } catch (error) { status.textContent = error.message; } finally { save.disabled = false; }
         });
@@ -617,7 +672,15 @@ PAGINA = """<!doctype html>
           const explanation = document.createElement("p");
           explanation.className = "muted";
           explanation.textContent = "O administrador principal tem todas as permissões. Os controles de acesso aparecem nos demais perfis.";
-          card.append(heading, details, note, explanation);
+          const preferences = document.createElement("div"); preferences.className = "row";
+          const filial = criarCampo(preferences, "Perguntar filial", user.perguntar_filial);
+          const regiao = criarCampo(preferences, "Perguntar região/tabela de preço", user.perguntar_regiao);
+          const save = document.createElement("button"); save.type = "button"; save.textContent = "Salvar preferências";
+          save.addEventListener("click", async () => {
+            try { await request(`/api/users/${user.telegram_id}`, {method:"PUT", body:JSON.stringify({perguntar_filial:filial.checked, perguntar_regiao:regiao.checked})}); notificarTemporariamente("Preferências salvas."); }
+            catch (error) { status.textContent = error.message; }
+          });
+          card.append(heading, details, note, explanation, preferences, save);
           usersContainer.append(card);
           continue;
         }
@@ -635,6 +698,8 @@ PAGINA = """<!doctype html>
         }
         const editor = document.createElement("div");
         const obterVinculo = adicionarSeletorModelo(editor, approved, checks, user.modelo_perfil_id);
+        const lerEscopo = editarEscopo(editor, user, obterVinculo.desvincular);
+        obterVinculo.escopoAplicado = lerEscopo.aplicar;
         vincularAcessoPermissoes(approved, checks);
         editor.append(access);
         adicionarMarcarTodos(editor, checks, approved);
@@ -642,7 +707,7 @@ PAGINA = """<!doctype html>
         save.type = "button";
         save.textContent = "Salvar perfil";
         save.addEventListener("click", async () => {
-          const profile = {modelo_perfil_id: obterVinculo()};
+          const profile = {...lerEscopo(), modelo_perfil_id: obterVinculo()};
           if (approved.checked !== Boolean(user.aprovado)) profile.aprovado = approved.checked;
           for (const [key] of permissions) profile[key] = checks[key].checked;
           try {
@@ -735,6 +800,8 @@ PAGINA = """<!doctype html>
         for (const [key, label] of permissions) checks[key] = criarCampo(fields, label, profile[key]);
         const editor = document.createElement("div");
         const obterVinculo = adicionarSeletorModelo(editor, approved, checks, profile.modelo_perfil_id);
+        const lerEscopo = editarEscopo(editor, profile, obterVinculo.desvincular);
+        obterVinculo.escopoAplicado = lerEscopo.aplicar;
         vincularAcessoPermissoes(approved, checks);
         editor.append(access);
         adicionarMarcarTodos(editor, checks, approved);
@@ -744,6 +811,7 @@ PAGINA = """<!doctype html>
           try {
             const values = Object.fromEntries(Object.entries(checks).map(([key, input]) => [key, input.checked]));
             values.modelo_perfil_id = obterVinculo();
+            Object.assign(values, lerEscopo());
             if (approved.checked !== Boolean(profile.aprovado)) values.aprovado = approved.checked;
             await acaoPerfilTeste("salvar", profile.id, values);
             status.textContent = "Permissões do perfil salvas.";
@@ -1393,6 +1461,16 @@ async def criar_usuario(request: Request):
     return registrar_usuario(int(texto), nome.strip() or None)
 
 
+@app.get("/api/access-options")
+def opcoes_acesso(request: Request):
+    _exigir_admin(request)
+    try:
+        return listar_opcoes_acesso()
+    except Exception as erro:
+        logger.warning('Falha ao listar filiais e regiões (%s)', type(erro).__name__)
+        raise HTTPException(status_code=503, detail='Não foi possível carregar filiais e regiões do Oracle.') from erro
+
+
 @app.get("/api/profile-templates")
 def modelos_perfil(request: Request):
     _exigir_admin(request)
@@ -1406,7 +1484,8 @@ async def _salvar_modelo(request, acao, modelo_id=None):
         dados = await request.json()
         if not isinstance(dados, dict):
             raise ValueError('Requisição inválida.')
-        return gerenciar_modelo_perfil(acao, modelo_id, dados.get('nome'), dados.get('permissoes'))
+        return gerenciar_modelo_perfil(acao, modelo_id, dados.get('nome'), dados.get('permissoes'),
+                                      {chave: dados[chave] for chave in CHAVES_ESCOPO if chave in dados})
     except ValueError as erro:
         raise HTTPException(status_code=400, detail=str(erro)) from erro
 
@@ -1477,10 +1556,10 @@ async def atualizar_usuario(telegram_id: int, request: Request):
         perfil = await request.json()
     except ValueError as erro:
         raise HTTPException(status_code=400, detail="Requisição inválida.") from erro
-    campos = {"aprovado", "modelo_perfil_id", *PERMISSOES}
+    campos = {"aprovado", "modelo_perfil_id", *CHAVES_ESCOPO, *OPCOES_CONSULTA, *PERMISSOES}
     if not isinstance(perfil, dict) or not perfil or not set(perfil).issubset(campos):
         raise HTTPException(status_code=400, detail="Campos de perfil inválidos.")
-    if any(not isinstance(valor, bool) for chave, valor in perfil.items() if chave != 'modelo_perfil_id'):
+    if any(not isinstance(valor, bool) for chave, valor in perfil.items() if chave not in CHAVES_ESCOPO | {'modelo_perfil_id'}):
         raise HTTPException(status_code=400, detail="As permissões devem ser booleanas.")
     try:
         return atualizar_perfil(telegram_id, perfil)

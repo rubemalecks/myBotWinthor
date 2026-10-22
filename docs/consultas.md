@@ -47,9 +47,9 @@ ORDER BY R.NUMREGIAO
 
 O trecho mostra os três campos habilitados. Na execução, entram apenas os campos autorizados para aquela busca.
 
-Retorno: `P.CODPROD`, `P.DESCRICAO`, `R.NUMREGIAO`, `R.REGIAO AS NOME_TABELA`, `T.PTABELA` e `T.PVENDA`. A mensagem apresenta `PVENDA` como preço de venda e `PTABELA` como programado. Não existe filtro de filial nessa consulta de preços.
+Retorno: `P.CODPROD`, `P.DESCRICAO`, `R.NUMREGIAO`, `R.REGIAO AS NOME_TABELA`, `T.PTABELA` e `T.PVENDA`. A mensagem apresenta `PVENDA` como preço de venda e `PTABELA` como programado. O preço é regional; quando houver restrição de filial, um `EXISTS` em `PCEST` exige que o produto tenha registro em uma filial autorizada.
 
-Os JOINs são internos: um produto sem registro de preço ou sem região com `STATUS = 'A'` não aparece, mesmo que exista em `PCPRODUT`. O retorno pode conter várias regiões. O filtro não exige que `PVENDA` seja positivo; essa validação é aplicada no cálculo de margem, quando necessário. Não há `ROWNUM` limitando esta consulta nem uma etapa de escolha se o OR encontrar códigos em produtos distintos; a mensagem utiliza a lista retornada e a identificação do primeiro registro.
+Os JOINs são internos: um produto sem registro de preço ou sem região com `STATUS = 'A'` não aparece, mesmo que exista em `PCPRODUT`. O retorno pode conter várias regiões. A consulta exige `T.PVENDA > 0`: tabelas sem preço válido são omitidas. Não há `ROWNUM` limitando esta consulta nem uma etapa de escolha se o OR encontrar códigos em produtos distintos; a mensagem utiliza a lista retornada e a identificação do primeiro registro.
 
 ### 2. Consulta por foto do código de barras
 
@@ -187,3 +187,12 @@ O indicador Telegram usa a API `getMe`, com o token salvo e limite assíncrono d
 Permissões são verificadas nos JSONs locais antes das consultas; não são permissões do usuário Oracle. O acesso ao bot exige perfil aprovado e as permissões específicas descritas acima. O administrador principal possui acesso total, exceto quando um perfil de teste estiver ativo para seu ID. As permissões `ver_margem_produto`, `ver_margem_departamento` e `ver_custos` são independentes.
 
 As linhas `CONSULTA` do terminal registram ID da atualização, ID/nome/username do Telegram, tipo e etapa da operação, código/termo ou filtros, quantidade de registros e duração em milissegundos. Para erros, registram tipo da exceção e códigos `ORA`, `DPI` ou `DPY`. Consultas complementares têm registros próprios; uma busca pode gerar logs de preços, custos e margem do departamento. Os logs específicos de consultas não registram token, senha, conteúdo da foto ou valores retornados de custo. Exceções também podem produzir traceback no terminal para diagnóstico.
+
+
+### Restrições de filial e tabela de preço
+
+Usuários e modelos podem conter `filiais_permitidas` e `tabelas_permitidas`. Ausência ou `null` libera todas; lista vazia bloqueia a categoria. Códigos são validados e enviados como binds. O administrador real não recebe essas restrições; perfis de teste recebem.
+
+A consulta por código, foto ou nome restringe `T.NUMREGIAO` e usa `EXISTS` em `PCEST` por produto/filial. A consulta de custos restringe `E.CODFILIAL`. As consultas agregadas de departamento filtram `E.CODFILIAL` e `T.NUMREGIAO` antes de somar. As listas de seleção de filial/região também recebem esses filtros. Restrições são relidas para cada consulta; botões antigos não contornam um bloqueio novo.
+
+A busca por código só exibe registros com `PVENDA > 0`. Sem resultados, uma consulta adicional em `PCPRODUT`, com os mesmos campos de código e restrição de filial, diferencia produto inexistente de produto sem preço nas tabelas permitidas. Esta verificação não revela preços de tabelas não autorizadas. A busca por nome pode apresentar um produto sem preço positivo; ao selecioná-lo, aplica-se a mesma verificação.
