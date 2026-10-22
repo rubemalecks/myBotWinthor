@@ -52,6 +52,8 @@ config_bot.json
 config_bot.json.*
 config_oracle.json
 config_oracle.json.*
+mensagens.json
+mensagens.json.*
 *-dados/
 dados/
 .dados_bot.json.*.tmp

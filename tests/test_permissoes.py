@@ -96,17 +96,43 @@ class PermissoesTests(unittest.TestCase):
         self.assertTrue(permissoes.tem_permissao(123, "consulta_preco"))
         self.assertFalse(permissoes.tem_permissao(123, "ver_custos"))
 
-    def test_admin_nao_pode_ser_bloqueado(self):
+    def test_admin_pode_ser_bloqueado_no_bot_sem_perder_identidade_admin(self):
         permissoes.registrar_usuario(999, "Admin")
-        with self.assertRaises(ValueError):
-            permissoes.atualizar_perfil(999, {"aprovado": False})
-        self.assertTrue(permissoes.tem_permissao(999, "ver_custos"))
+        permissoes.atualizar_perfil(999, {"aprovado": False})
+        permissoes.registrar_usuario(999, 'Admin')
+        permissoes.inicializar()
+        self.assertFalse(permissoes.tem_permissao(999, "ver_custos"))
+        self.assertTrue(permissoes.eh_admin(999))
+
+    def test_admin_personalizado_preserva_restricoes_ao_acessar_e_reiniciar(self):
+        permissoes.atualizar_perfil(999, {'ver_custos': False, 'filiais_permitidas': ['1'], 'tabelas_permitidas': ['2']})
+        permissoes.registrar_usuario(999)
+        permissoes.garantir_administrador()
+        permissoes.inicializar()
+        self.assertFalse(permissoes.tem_permissao(999, 'ver_custos'))
+        self.assertEqual(permissoes.obter_escopo_acesso(999)['filiais_permitidas'], ['1'])
+        self.assertEqual(permissoes.obter_escopo_acesso(999)['tabelas_permitidas'], ['2'])
 
     def test_administrador_e_pre_cadastrado_sem_precisar_iniciar_telegram(self):
         perfil = permissoes.obter_perfil(999)
         self.assertTrue(perfil['aprovado'])
         self.assertTrue(all(perfil[chave] for chave in permissoes.PERMISSOES))
         self.assertEqual(permissoes.listar_perfis_teste()['profiles'], [])
+
+    def test_modelo_atualiza_tambem_as_permissoes_do_admin_vinculado(self):
+        permissoes.gerenciar_modelo_perfil()
+        permissoes.atualizar_perfil(999, {'modelo_perfil_id': 'cliente'})
+        self.assertFalse(permissoes.tem_permissao(999, 'ver_custos'))
+        permissoes.gerenciar_modelo_perfil(
+            'salvar', 'cliente', 'Cliente',
+            {'consulta_preco': True, 'ver_custos': True},
+            {'filiais_permitidas': ['2'], 'tabelas_permitidas': ['3']},
+        )
+        self.assertTrue(permissoes.tem_permissao(999, 'ver_custos'))
+        self.assertFalse(permissoes.tem_permissao(999, 'buscar_por_foto'))
+        self.assertEqual(permissoes.obter_escopo_acesso(999), {
+            'filiais_permitidas': ['2'], 'tabelas_permitidas': ['3'],
+        })
 
     def test_salvar_novo_id_administrador_cadastra_com_acesso_total(self):
         permissoes.salvar_configuracoes({'TELEGRAM_ADMIN_ID': '456'})

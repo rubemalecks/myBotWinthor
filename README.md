@@ -82,31 +82,83 @@ Ao escolher **0 — Sair**, o configurador pergunta se deseja iniciar o serviço
 | **Servidor Oracle** | Informe host, porta, service name, usuário e senha. Clique em **SALVAR E TESTAR ORACLE**. |
 | **Perfis e permissões** | Cadastre ou aprove usuários e escolha o que cada um pode consultar. |
 | **Modelos de perfil** | Edite Funcionário e Cliente ou cadastre novas predefinições de permissões. |
+| **Personalização** | Configure o texto das respostas do bot, com variáveis e prévia da mensagem. |
 
 **Depois de salvar ou alterar o token, pare e inicie o projeto novamente.** Token e senha Oracle vazios mantêm os valores salvos.
 
-O **ID do administrador informado na guia Bot é pré-cadastrado automaticamente com todas as permissões**, sem precisar cadastrar esse usuário na lista ou criar um perfil de teste. Use o ID numérico retornado por `/meuid`, não o número de telefone.
+O **ID do administrador informado na guia Bot é pré-cadastrado automaticamente com todas as permissões** quando ainda não existe na lista. Depois, personalize seu acesso ao bot em **Perfis e permissões**, usando os mesmos controles dos demais usuários: acesso, permissões individuais, modelos, filiais e tabelas. As escolhas permanecem salvas após reiniciar. Isso não altera o login administrativo do painel. Use o ID numérico retornado por `/meuid`, não o número de telefone.
 
 Se o painel responder, mas o bot não receber mensagens, confirme o token e reinicie depois de salvá-lo. No terminal, cada atualização recebida gera um registro `CONSULTA` com `consulta: telegram` e `etapa: RECEBIDO`. Um conflito de polling indica que outra instância usa o mesmo token: pare a execução antiga, inclusive em outro computador. `TELEGRAM: OK` verifica o acesso à API, não garante que o polling esteja ativo. Ao iniciar pelo BAT, erros mantêm a janela aberta para leitura.
 
 Os indicadores mostram **OK verde** ou **OFF vermelho**. Clique para verificar novamente. O teste Oracle verifica conexão e acesso à consulta de produtos; custos e departamentos dependem de outras tabelas.
 
+Confirmações do painel desaparecem após 2,5 segundos. Erros e resultados detalhados dos testes de conexão ficam visíveis por 10 segundos. Avisos de verificação em andamento permanecem até a conclusão.
+
+O host/IP e o usuário do Oracle ficam ocultos após salvar e ao carregar valores já configurados. Use **Mostrar/Ocultar** ao lado de cada campo para visualizar ou editar os dados.
+
 Para iniciar com o Windows, use **Inicialização automática do Windows**, na guia Bot. Não execute outra instância manual enquanto o serviço estiver ativo.
 
-## 4. Usar no Telegram
+### Personalizar mensagens de retorno
 
-Abra uma conversa privada com o bot. Os recursos dependem das permissões do perfil.
+Na guia **Personalização**, escolha o tipo de mensagem, edite o texto e clique em **Salvar mensagem**. A prévia usa dados fictícios. Clique nas variáveis disponíveis para inseri-las, mantendo as chaves. Exemplo para **Produto → Identificação do produto**:
 
-| Envie | Resultado |
+```text
+🛒 Minha empresa
+Produto: {descricao}
+Código: {codprod}
+```
+
+Você pode ajustar os blocos de produto, preços, preço programado, custos/nota de entrada, lucro do produto, departamento, fórmula, pesquisa por nome e avisos de consulta. Os mesmos blocos de produto são usados na busca por código, foto ou nome. Os blocos de preço, custo e lucro se repetem conforme as tabelas ou filiais retornadas.
+
+**A personalização altera o texto, não o cálculo nem as permissões.** Custos e preço programado só aparecem para quem tem acesso; suas variáveis não são aceitas nos blocos públicos de preço. Não digite credenciais nem dados confidenciais como texto fixo. Textos são enviados sem formatação Markdown/HTML; emojis e quebras de linha são aceitos. Cada modelo aceita até 2.500 caracteres.
+
+As alterações valem nas próximas consultas, **sem reiniciar o bot**. Para desfazer uma personalização, clique em **Restaurar padrão** e depois em **Salvar mensagem**. Os modelos ficam em `mensagens.json`, criado na pasta de dados no primeiro salvamento. Inclua esse arquivo no backup ou copie-o para outra instalação para reutilizar o mesmo padrão.
+
+## 4. Comandos do bot no Telegram
+
+**Os comandos abaixo devem ser enviados na conversa privada com o bot no aplicativo Telegram. Não são comandos do PowerShell, do BAT ou do painel web.** Os recursos disponíveis dependem das permissões do usuário.
+
+### Lista completa de comandos
+
+| Comando do bot | O que faz / exemplo |
 |---|---|
 | `/start` | Inicia o atendimento e registra seu usuário. |
 | `/meuid` | Mostra seu ID para cadastro no painel. |
-| Um código, como `6` | Busca por código interno ou de barras. |
+| `/ajuda` | Mostra instruções de uso. |
+| `/comandos` | Lista os comandos e recursos apresentados para o perfil. |
+| `/margem` | Inicia a escolha de departamento, filial e região/tabela para análise. Aceita código ou nome: `/margem 108` ou `/margem ORGANNACT`. |
+| `/cancelarmargem` | Cancela a seleção de departamento em andamento. Não apaga uma mensagem de resultado já enviada nem interrompe uma consulta SQL já iniciada. |
+| `/formula` | Mostra exemplos de uso e a origem dos campos usados no cálculo. |
+| `/fomula` | Alias de `/formula`; aceita os mesmos argumentos e permissões. |
+
+### Exemplos do comando `/formula`
+
+| Envie ao bot | Consulta |
+|---|---|
+| `/formula 1663` | Fórmula do produto pelo CODPROD 1663. |
+| `/formula produto 1663` | Mesmo resultado, indicando explicitamente que é um produto. |
+| `/formula ORGANNACT` | Fórmula do departamento pesquisado pelo nome. |
+| `/formula departamento 108` | Fórmula do departamento de código 108. |
+| `/formula depto 108` | Forma abreviada de consultar o departamento pelo código. |
+| `/fomula 1663` | Mesmo que `/formula 1663`. |
+
+Um número sem prefixo é sempre tratado como **CODPROD**. Para consultar um departamento por código, escreva `departamento` ou `depto` antes dele. Se o nome corresponder a vários departamentos, o bot lista os códigos para você escolher.
+
+A fórmula de produto exige acesso a preços, busca por CODPROD e margem por produto. A fórmula de departamento exige margem por departamento. Os números de custo e a substituição numérica só aparecem com **Ver custos detalhados**; sem essa permissão, a explicação mostra a fórmula genérica e o percentual. Todas as consultas respeitam as filiais e tabelas autorizadas.
+
+### Consultas sem comando
+
+Estas ações também são feitas na conversa do Telegram, sem digitar `/`:
+
+| Envie ao bot | Resultado |
+|---|---|
+| Um código, como `6` | Busca por código interno ou de barras, conforme os campos liberados no perfil. |
 | Parte do nome, com pelo menos 3 caracteres | Mostra até dez produtos para escolher. |
-| Foto de um código de barras | Identifica o código e consulta o produto. |
-| `/margem` ou `/margem 113` | Inicia a análise por departamento. |
-| `/cancelarmargem` | Cancela a análise por departamento. |
-| `/ajuda` ou `/comandos` | Mostra a ajuda e os recursos disponíveis. |
+| Foto de um código de barras | Identifica o código e consulta o produto, se a busca por foto estiver autorizada. |
+
+Se **Perguntar filial** ou **Perguntar região/tabela** estiver ativo, o bot apresenta botões para escolher antes de mostrar o produto. O botão **Cancelar consulta** encerra essa seleção específica.
+
+### Liberar usuários no painel
 
 Para liberar alguém, abra **Perfis e permissões**, atualize a lista e clique no perfil. Marque **Permitir acesso ao bot**, selecione as permissões e salve. Também é possível cadastrar pelo ID.
 
@@ -116,13 +168,17 @@ Marcar qualquer permissão habilita **Permitir acesso ao bot**; desmarcar esse a
 
 Os modelos iniciais **Funcionário** e **Cliente** liberam consultas de preço; Funcionário também inclui foto e código interno. Custos, margens e preço programado começam desmarcados nos dois e podem ser personalizados.
 
-**Margem por produto, margem por departamento e visualização de custos são permissões independentes.** A margem do departamento também pode aparecer na consulta do produto, quando autorizada.
+**Margem por produto, margem por departamento e visualização de custos são permissões independentes.** A consulta individual mostra apenas o lucro do produto consultado, quando **Ver margem por produto** estiver habilitado. Para consultar o lucro do departamento, use `/margem` com a permissão correspondente; ele não é incluído na resposta de um produto.
 
-**Ver preço programado** também é uma permissão separada. O preço de venda aparece na consulta autorizada; o valor programado (`PTABELA`) só aparece com essa opção habilitada. Para usuários comuns e perfis de teste, ela começa desmarcada; o administrador principal mantém acesso total.
+O comando **`/formula`** (também aceita **`/fomula`**) apresenta a origem dos campos, a fórmula e o percentual para cada filial/tabela autorizada. Números sem prefixo são tratados como CODPROD; para departamento numérico, use `departamento` antes do código. Se o nome encontrar vários departamentos, o bot lista os códigos para escolher. A substituição com valores de custo exige **Ver custos detalhados**, além da permissão de margem correspondente. Sem essa permissão de custo, mostra apenas a fórmula genérica e o percentual. O custo de entrada é o valor registrado em `PCEST.CUSTOULTENT`; a fórmula calcula o ganho sobre ele, não a composição contábil do custo.
+
+O percentual exibido como **Lucro presumido sobre o custo** é calculado por `(venda − custo) ÷ custo × 100`. Esse é o nome usado pelo projeto para a estimativa bruta de ganho sobre o custo de entrada (markup); não é um cálculo de apuração tributária. No departamento, usa as somas de preços e custos, considerando uma unidade por produto. Não representa lucro realizado nem desconta impostos e despesas adicionais. Custo zero não permite calcular o percentual individual.
+
+**Ver preço programado** também é uma permissão separada. O preço de venda aparece na consulta autorizada; o valor programado (`PTABELA`) só aparece com essa opção habilitada, inclusive para o administrador. Para usuários comuns e perfis de teste, ela começa desmarcada.
 
 ### Filiais e tabelas de preço permitidas
 
-As opções **Perguntar filial na consulta** e **Perguntar região/tabela de preço** fazem o bot pedir a escolha por botões a cada produto consultado, seja por código, nome ou foto. Ative uma ou ambas no usuário ou modelo. No cadastro do administrador, essas opções ficam em **Salvar preferências** e começam desativadas.
+As opções **Perguntar filial na consulta** e **Perguntar região/tabela de preço** fazem o bot pedir a escolha por botões quando houver mais de uma opção disponível e autorizada para o produto, seja por código, nome ou foto. Com apenas uma filial ou região disponível, o bot seleciona essa opção automaticamente e mostra o preço sem perguntar por ela. Só aparecem tabelas com preço de venda maior que zero. Ative uma ou ambas no usuário ou modelo e clique em **Salvar perfil**. Elas começam desativadas, inclusive para o administrador.
 
 Se ambas estiverem ativas, o bot pergunta primeiro a filial e depois a região/tabela. Só aparecem opções autorizadas, e as tabelas precisam ter preço válido para o produto. O resultado e os cálculos usam as escolhas feitas. A seleção expira em 15 minutos, pode ser cancelada e não permite contornar restrições alteradas depois da pergunta. Região e tabela de preço são a mesma seleção (`NUMREGIAO`); escolher filial não cria um preço próprio por filial.
 
@@ -130,7 +186,7 @@ Em cada usuário ou modelo, configure **Filiais e tabelas autorizadas** marcando
 
 Se o Oracle estiver indisponível, o painel mantém os códigos já salvos como caixas de seleção e informa a falha. Use **Atualizar usuários** para recarregar a lista. Filiais vêm dos registros de `PCEST`; regiões vêm de `PCREGIAO`. Regiões inativas são identificadas e continuam excluídas das consultas de preços.
 
-Preços, custos e margens respeitam esses limites. Os preços continuam regionais (`PCTABPR`); a restrição de filial verifica o registro do produto em `PCEST`, sem exigir estoque positivo. Perfis antigos continuam com acesso a todas as opções até serem limitados; o administrador principal mantém acesso total.
+Preços, custos e margens respeitam esses limites, inclusive nas consultas do administrador. Os preços continuam regionais (`PCTABPR`); a restrição de filial verifica o registro do produto em `PCEST`, sem exigir estoque positivo. Perfis antigos continuam com acesso a todas as opções até serem limitados.
 
 Na consulta de produto, aparecem somente tabelas ativas com **`PVENDA > 0`**. Se houver preço em uma só, apenas ela é mostrada. Se o produto existir nas filiais permitidas, mas não houver preço nas tabelas autorizadas, o bot informa que ele não está precificado nessas tabelas. Produto inexistente tem uma mensagem diferente.
 
@@ -145,7 +201,8 @@ myBotWinthor/                 ← projeto e .env
 myBotWinthor-dados/           ← dados locais
 ├── config_bot.json          ← Telegram e opções do painel
 ├── config_oracle.json       ← conexão Oracle
-└── dados_bot.json           ← usuários, permissões e hash da senha do painel
+├── dados_bot.json           ← usuários, permissões e hash da senha do painel
+└── mensagens.json           ← respostas personalizadas, criado ao salvar no painel
 ```
 
 O nome padrão é o nome da pasta do projeto seguido de `-dados`. Confira o caminho em **Bot → Armazenamento**. `BOT_DATA_DIR` no `.env` permite escolher outro local.
@@ -157,7 +214,7 @@ O nome padrão é o nome da pasta do projeto seguido de `-dados`. Confira o cami
 1. Pare o bot e o serviço, se estiver ativo.
 2. Copie a **pasta de dados inteira** para um local seguro, por exemplo `C:\Backups\myBotWinthor\AAAA-MM-DD\`.
 3. Guarde também uma cópia do `.env`.
-4. Confira os três JSONs na cópia e inicie o projeto novamente.
+4. Confira os JSONs na cópia, incluindo `mensagens.json` se houver personalizações, e inicie o projeto novamente.
 
 Os JSONs de configuração contêm token e senha Oracle. Não publique esses arquivos. Essa cópia **não substitui o backup do Oracle**.
 

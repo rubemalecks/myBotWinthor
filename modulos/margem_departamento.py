@@ -6,6 +6,8 @@ Não é lucro realizado, nem leva em conta quantidade em estoque/vendida.
 from decimal import Decimal
 from modulos.database import executar_consulta
 from modulos.escopo import filtros_escopo
+from modulos.calculos import ganho_sobre_custo
+from modulos.mensagens import renderizar_mensagem
 
 def _consultar_escopo(sql, params, escopo, filial, regiao, marcador):
     sql = sql.replace(marcador, filtros_escopo(escopo, params, filial, regiao) + " " + marcador, 1)
@@ -130,35 +132,23 @@ def formatar_relatorio(departamento, filial, linhas, incluir_custos=True):
         valor = Decimal(str(valor or 0))
         return 'R$ ' + f'{valor:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.')
 
-    texto = (f'📊 MARGEM DO MIX — DEPARTAMENTO\n'
-             f'🏷️ {departamento["codepto"]} - {departamento["descricao"]}\n'
-             f'🏢 Filial: {filial}\n\n')
+    texto = renderizar_mensagem('departamento', codigo=departamento['codepto'],
+        departamento=departamento['descricao'], filial=filial)
     if not linhas:
-        return texto + '⚠️ Nenhum produto com preço nesta filial e região.'
+        return texto + renderizar_mensagem('departamento_vazio')
 
     for item in linhas:
         preco = Decimal(str(item['total_precos'] or 0))
         custo = Decimal(str(item['total_custos'] or 0))
         diferenca = preco - custo
-        margem = (diferenca / preco * 100) if preco > 0 else None
+        margem = ganho_sobre_custo(preco, custo)
         margem_txt = (f'{margem:.2f}'.replace('.', ',') + '%') if margem is not None else 'Indisponível'
-        texto += (
-            f'━━━━━━━━━━━━━━━━━━━━\n'
-            f'📋 {item["numregiao"]} - {item["nome_tabela"]}\n\n'
-            f'💰 Soma dos preços: {moeda(preco)}\n'
-            f'📊 Margem global: {margem_txt}\n'
-        )
+        texto += renderizar_mensagem('departamento_tabela', regiao=item['numregiao'],
+            tabela=item['nome_tabela'], precos=moeda(preco), lucro=margem_txt)
         if incluir_custos:
-            texto += (
-                f'📥 Soma dos custos: {moeda(custo)}\n'
-                f'📈 Diferença bruta: {moeda(diferenca)}\n'
-                f'📦 Produtos analisados: {item["produtos_validos"] or 0} de {item["total_produtos"]}\n'
-                f'⚠️ Sem preço válido: {item["sem_preco"] or 0}\n'
-                f'⚠️ Sem custo: {item["sem_custo"] or 0}\n'
-                f'ℹ️ Custo zero: {item["custo_zero"] or 0}\n'
-            )
+            texto += renderizar_mensagem('departamento_custos', custos=moeda(custo), diferenca=moeda(diferenca),
+                validos=item['produtos_validos'] or 0, total=item['total_produtos'],
+                sem_preco=item['sem_preco'] or 0, sem_custo=item['sem_custo'] or 0, custo_zero=item['custo_zero'] or 0)
         texto += '\n'
-    texto += ('ℹ️ Simulação de 1 unidade por produto com preço e custo válidos. '
-              'Não representa faturamento nem lucro realizado. '
-              'Margem antes de impostos e outras despesas.')
+    texto += renderizar_mensagem('departamento_rodape')
     return texto

@@ -102,39 +102,21 @@ O SQL atual não adiciona filtros de cancelamento, tipo de operação ou quantid
 
 ### 5. Margem do produto
 
+Nas mensagens, o resultado é chamado de **Lucro presumido sobre o custo**: uma estimativa bruta de ganho percentual (markup), sem apuração tributária. A fórmula abaixo permanece a mesma.
+
 Exige `ver_margem_produto`. O bloco **MARGEM DO PRODUTO** é separado dos custos e combina cada preço `PCTABPR.PVENDA` retornado com `PCEST.CUSTOULTENT` de cada filial retornada pela consulta de custos:
 
 ```text
-Margem do produto (%) = ((PVENDA - CUSTOULTENT) / PVENDA) × 100
+Ganho sobre o custo (%) = ((PVENDA - CUSTOULTENT) / CUSTOULTENT) × 100
 ```
 
-O cálculo usa `Decimal` e apresenta duas casas decimais. Exemplo: preço `18,29`, custo `13,59` → margem `25,70%`. Preço ou custo nulo, ou preço menor ou igual a zero, produz “Indisponível”. Custo zero é aceito; não há filtro específico de custo negativo. Margens negativas podem ocorrer quando o custo excede o preço.
+O cálculo usa `Decimal` e apresenta duas casas decimais. Exemplo: preço `18,29`, custo `13,59` → ganho sobre o custo `34,58%`. Preço ou custo nulo, zero ou negativo produz “Indisponível”. O ganho é negativo quando a venda é positiva e fica abaixo do custo.
 
-Não desconta impostos/despesas adicionais nem usa o preço programado `PTABELA`. Não é markup sobre o custo. Uma falha na consulta complementar de custos/margem é informada sem descartar os preços já encontrados.
+Não desconta impostos/despesas adicionais nem usa o preço programado `PTABELA`. O percentual é markup (ganho sobre o custo), e não margem sobre a venda. A opção de permissão continua chamada de margem no painel. Uma falha na consulta complementar de custos/margem é informada sem descartar os preços já encontrados.
 
-### 6. Margem média do departamento na consulta do produto
+A consulta individual não executa a agregação do departamento e não inclui seu lucro na resposta, mesmo com `ver_margem_departamento` habilitada. Essa permissão libera a análise separada pelo comando `/margem` e a fórmula de departamento pelo comando `/formula`.
 
-Exige `ver_margem_departamento`, independentemente de `ver_margem_produto` e `ver_custos`. Executada por `consultar_margens_departamento_produto` após a consulta de preços.
-
-1. Obtém o departamento por `SELECT CODEPTO FROM PCPRODUT WHERE CODPROD = :CODPROD`.
-2. Seleciona os produtos com `P.CODEPTO` igual ao departamento encontrado.
-3. Relaciona `PCTABPR` pelo `CODPROD`, `PCREGIAO` pelo `NUMREGIAO` e `PCEST` pelo `CODPROD`.
-4. Exige `R.STATUS = 'A'`, `T.PVENDA > 0` e `E.CUSTOULTENT IS NOT NULL`.
-5. Restringe regiões por `EXISTS` em `PCTABPR TP`, comparando `TP.CODPROD = :CODPROD` e `TP.NUMREGIAO = T.NUMREGIAO`.
-6. Restringe filiais por `EXISTS` em `PCEST EP`, comparando `EP.CODPROD = :CODPROD` e `EP.CODFILIAL = E.CODFILIAL`.
-7. Agrupa por `P.CODEPTO, E.CODFILIAL, T.NUMREGIAO, R.REGIAO` e ordena por filial e região.
-
-Cada grupo retorna `SUM(T.PVENDA) AS TOTAL_PRECOS`, `SUM(E.CUSTOULTENT) AS TOTAL_CUSTOS` e `COUNT(*) AS PRODUTOS_VALIDOS`. O parâmetro é o código interno do produto localizado. O custo zero participa; custo nulo e preço não positivo ficam fora. Os `EXISTS` exigem registro do produto consultado naquela região/filial, não saldo positivo em estoque.
-
-```text
-Margem do mix (%) = ((TOTAL_PRECOS - TOTAL_CUSTOS) / TOTAL_PRECOS) × 100
-```
-
-Embora a mensagem use “margem média”, o cálculo é a **margem global das somas**, equivalente à média das margens ponderada pelo preço de cada produto, e não a média aritmética simples dos percentuais. Considera uma unidade por produto válido em cada filial/região, sem ponderação por vendas ou estoque. O resumo exibe departamento, filial, nome da tabela, margem e quantidade considerada, sem revelar os totais de custo. Não depende de `PCDEPTO`, pois identifica o departamento pelo código em `PCPRODUT`.
-
-Se não houver dados válidos, informa a ausência. Se esta consulta falhar, os preços e os outros blocos já calculados continuam sendo enviados.
-
-### 7. Análise de departamento pelo comando `/margem`
+### 6. Análise de departamento pelo comando `/margem`
 
 Exige `ver_margem_departamento` e conversa privada. As etapas de seleção são:
 
@@ -170,11 +152,11 @@ WHERE P.CODEPTO = :DEPTO
 | `TOTAL_PRECOS` | Soma `PVENDA` somente dos produtos válidos. |
 | `TOTAL_CUSTOS` | Soma `CUSTOULTENT` somente dos mesmos produtos válidos. |
 
-Usa a fórmula da margem do mix descrita na seção anterior, com duas casas decimais. Totais de preço não positivos tornam a margem indisponível. A diferença bruta é `TOTAL_PRECOS - TOTAL_CUSTOS`. Sem `ver_custos`, o relatório omite soma dos custos, diferença bruta e contagens detalhadas; mantém soma dos preços e margem global.
+Usa a fórmula de ganho sobre o custo do mix descrita na seção anterior, com duas casas decimais. Totais de preço ou custo não positivos tornam o percentual indisponível. A diferença bruta é `TOTAL_PRECOS - TOTAL_CUSTOS`. Sem `ver_custos`, o relatório omite soma dos custos, diferença bruta e contagens detalhadas; mantém soma dos preços e ganho global sobre o custo.
 
 Os contadores usam linhas dos JOINs, não `COUNT(DISTINCT CODPROD)`. A interpretação de uma unidade por produto pressupõe registros únicos por produto/região em `PCTABPR` e por produto/filial em `PCEST`. A análise não calcula lucro realizado, não usa quantidade vendida ou estoque e não aplica descontos tributários/despesas adicionais.
 
-### 8. Testes de conexão e indicadores do painel
+### 7. Testes de conexão e indicadores do painel
 
 O indicador Oracle abre uma conexão com timeout TCP de 5 segundos e timeout de chamada de 5 segundos. Primeiro executa `SELECT 1 FROM DUAL`. Depois executa a mesma consulta de preços com código `0`, os três campos de busca e a condição adicional `WHERE 1=0 AND (...)`, sem recuperar produtos. O teste do painel possui limite assíncrono de 12 segundos.
 
@@ -182,17 +164,29 @@ Somente passar pelos dois passos produz **ORACLE: OK**. `ORA-00942` ou `ORA-0103
 
 O indicador Telegram usa a API `getMe`, com o token salvo e limite assíncrono de 12 segundos. **TELEGRAM: OK** indica resposta válida da API; não garante que o processo de polling tenha sido reiniciado após uma troca de token. Não consulta tabelas Oracle. Os indicadores atualizam ao entrar no painel, ao salvar a seção correspondente, ao clicar e periodicamente a cada minuto com a página visível.
 
-### 9. Acesso local e rastreamento no terminal
+### 8. Acesso local e rastreamento no terminal
 
-Permissões são verificadas nos JSONs locais antes das consultas; não são permissões do usuário Oracle. O acesso ao bot exige perfil aprovado e as permissões específicas descritas acima. O administrador principal possui acesso total, exceto quando um perfil de teste estiver ativo para seu ID. As permissões `ver_margem_produto`, `ver_margem_departamento` e `ver_custos` são independentes.
+Permissões são verificadas nos JSONs locais antes das consultas; não são permissões do usuário Oracle. O acesso ao bot exige perfil aprovado e as permissões específicas descritas acima, inclusive para o administrador principal. Seu perfil recebe todas as permissões ao ser criado, mas pode ser personalizado no painel, com os mesmos limites de filial e tabela dos demais usuários. Essas escolhas são preservadas ao reiniciar e não alteram o acesso administrativo ao painel. As permissões `ver_margem_produto`, `ver_margem_departamento` e `ver_custos` são independentes.
 
-As linhas `CONSULTA` do terminal registram ID da atualização, ID/nome/username do Telegram, tipo e etapa da operação, código/termo ou filtros, quantidade de registros e duração em milissegundos. Para erros, registram tipo da exceção e códigos `ORA`, `DPI` ou `DPY`. Consultas complementares têm registros próprios; uma busca pode gerar logs de preços, custos e margem do departamento. Os logs específicos de consultas não registram token, senha, conteúdo da foto ou valores retornados de custo. Exceções também podem produzir traceback no terminal para diagnóstico.
+As linhas `CONSULTA` do terminal registram ID da atualização, ID/nome/username do Telegram, tipo e etapa da operação, código/termo ou filtros, quantidade de registros e duração em milissegundos. Para erros, registram tipo da exceção e códigos `ORA`, `DPI` ou `DPY`. Consultas complementares têm registros próprios; uma busca de produto pode gerar logs de preços e custos/margem do próprio produto. A margem do departamento é consultada separadamente pelos comandos correspondentes. Os logs específicos de consultas não registram token, senha, conteúdo da foto ou valores retornados de custo. Exceções também podem produzir traceback no terminal para diagnóstico.
 
 
 ### Restrições de filial e tabela de preço
 
-Usuários e modelos podem conter `filiais_permitidas` e `tabelas_permitidas`. Ausência ou `null` libera todas; lista vazia bloqueia a categoria. Códigos são validados e enviados como binds. O administrador real não recebe essas restrições; perfis de teste recebem.
+Usuários e modelos podem conter `filiais_permitidas` e `tabelas_permitidas`. Ausência ou `null` libera todas; lista vazia bloqueia a categoria. Códigos são validados e enviados como binds. Essas restrições também se aplicam ao administrador e aos perfis de teste.
 
 A consulta por código, foto ou nome restringe `T.NUMREGIAO` e usa `EXISTS` em `PCEST` por produto/filial. A consulta de custos restringe `E.CODFILIAL`. As consultas agregadas de departamento filtram `E.CODFILIAL` e `T.NUMREGIAO` antes de somar. As listas de seleção de filial/região também recebem esses filtros. Restrições são relidas para cada consulta; botões antigos não contornam um bloqueio novo.
 
+Quando as opções de perguntar filial ou região estão habilitadas, cada pergunta só aparece se houver mais de uma alternativa autorizada para o produto. Uma filial única em `PCEST` ou uma região única entre os preços válidos (`PCTABPR.PVENDA > 0` e `PCREGIAO.STATUS = 'A'`) é selecionada automaticamente. O escopo resultante também restringe os custos e as margens exibidos. Filial e região são avaliadas separadamente; o preço continua regional.
+
 A busca por código só exibe registros com `PVENDA > 0`. Sem resultados, uma consulta adicional em `PCPRODUT`, com os mesmos campos de código e restrição de filial, diferencia produto inexistente de produto sem preço nas tabelas permitidas. Esta verificação não revela preços de tabelas não autorizadas. A busca por nome pode apresentar um produto sem preço positivo; ao selecioná-lo, aplica-se a mesma verificação.
+
+### Mensagens personalizadas
+
+`modulos/mensagens.py` define os modelos de texto, os exemplos e as variáveis autorizadas por bloco. A guia **Personalização** usa `GET/PUT /api/message-templates` e `POST /api/message-templates/preview`; todos exigem sessão administrativa, e gravação/prévia também exigem CSRF. A prévia usa exclusivamente exemplos fictícios, sem consultar Oracle ou Telegram.
+
+Os modelos salvos são lidos de `mensagens.json`, na mesma pasta de `dados_bot.json`. A gravação é atômica; salvar um bloco preserva os demais. Enviar `null` para o bloco restaura seu padrão. Sem arquivo, os padrões do código são usados. Se um modelo ou arquivo for inválido durante uma resposta do bot, o bloco volta ao padrão e registra um aviso sem incluir o texto personalizado no log.
+
+Modelos aceitam texto simples, emojis, quebras de linha e variáveis nomeadas como `{descricao}`. Chaves literais devem ser duplicadas: `{{texto}}`. São rejeitados nomes desconhecidos, acesso por atributo/índice, conversões e especificadores de formato. O limite é de 2.500 caracteres por modelo. O preenchimento não executa código e não interpreta novamente os valores recebidos do banco.
+
+Os blocos continuam sendo montados após as verificações de permissão: `programado` exige `ver_preco_programado`; custos, notas, totais de custo e substituição numérica exigem `ver_custos`; lucro do produto exige `ver_margem_produto`; relatório/fórmula de departamento exige `ver_margem_departamento`. Cada bloco recebe somente suas variáveis permitidas. A personalização não altera SQL, escopos de filial/tabela nem a fórmula matemática.

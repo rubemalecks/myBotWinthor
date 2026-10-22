@@ -23,7 +23,7 @@ class RelatorioMargemTests(unittest.TestCase):
             self.departamento, 1, self.linhas, incluir_custos=False
         )
 
-        self.assertIn("Margem global: 30,00%", texto)
+        self.assertIn("Lucro presumido sobre o custo: 42,86%", texto)
         self.assertNotIn("Soma dos custos", texto)
         self.assertNotIn("Diferença bruta", texto)
         self.assertNotIn("Sem custo", texto)

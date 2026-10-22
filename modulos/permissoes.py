@@ -249,6 +249,23 @@ def _ler_configuracao_json(caminho):
         raise RuntimeError(f"Não foi possível ler {caminho.name}. Corrija o JSON ou restaure um backup.") from erro
 
 
+def obter_mensagens_personalizadas():
+    with _LOCK:
+        caminho = ARQUIVO_DADOS.with_name('mensagens.json')
+        return _ler_configuracao_json(caminho) if caminho.exists() else {}
+
+
+def salvar_mensagens_personalizadas(alteracoes):
+    with _LOCK:
+        mensagens = obter_mensagens_personalizadas()
+        for chave, texto in alteracoes.items():
+            if texto is None:
+                mensagens.pop(chave, None)
+            else:
+                mensagens[chave] = texto
+        _gravar_json(ARQUIVO_DADOS.with_name('mensagens.json'), mensagens)
+
+
 def _migrar_permissoes_margem(dados):
     alterado = False
     for perfil in [*dados["usuarios"].values(), *dados.get("perfis_teste", {}).values()]:
@@ -322,11 +339,11 @@ def inicializar():
 
 
 def garantir_administrador():
-    """Pré-cadastra o administrador real com acesso total."""
+    """Cria o administrador com acesso total, preservando perfis já existentes."""
     admin_id = obter_configuracao()['TELEGRAM_ADMIN_ID'].strip()
     if admin_id.isascii() and admin_id.isdecimal() and int(admin_id) > 0:
         existente = obter_perfil(int(admin_id))
-        if existente and existente.get('aprovado') and all(existente.get(chave) for chave in PERMISSOES):
+        if existente is not None:
             return existente
         return registrar_usuario(int(admin_id))
     return None
@@ -469,6 +486,7 @@ def registrar_usuario(user_id, nome=None, username=None):
         dados = _carregar_arquivo()
         chave = str(user_id)
         perfil = dados["usuarios"].get(chave)
+        novo = perfil is None
         if perfil is None:
             perfil = {
                 **_VALORES_PERMISSAO_INICIAIS,
@@ -484,7 +502,7 @@ def registrar_usuario(user_id, nome=None, username=None):
             perfil["nome"] = nome or perfil.get("nome")
             perfil["username"] = username or perfil.get("username")
             perfil["ultimo_acesso"] = agora
-        if eh_admin(user_id):
+        if novo and eh_admin(user_id):
             perfil.update({
                 "aprovado": True,
                 "ver_preco_programado": True,
@@ -597,8 +615,6 @@ def gerenciar_modelo_perfil(acao='listar', modelo_id=None, nome=None, permissoes
                                   'permissoes': {chave: permissoes.get(chave, False) for chave in (*PERMISSOES, *OPCOES_CONSULTA)}}
             for perfil in [*dados['usuarios'].values(), *dados.get('perfis_teste', {}).values()]:
                 if perfil.get('modelo_perfil_id') == modelo_id:
-                    if perfil in dados['usuarios'].values() and eh_admin(perfil['telegram_id']):
-                        continue
                     perfil.update(modelos[modelo_id]['permissoes'])
                     perfil.update({chave: modelos[modelo_id].get(chave) for chave in CHAVES_ESCOPO})
                     if not perfil.get('aprovado'):
@@ -629,8 +645,6 @@ def tem_permissao(user_id, permissao):
     teste = perfil_teste_ativo(user_id)
     if teste is not None:
         return bool(teste.get("aprovado") and teste.get(permissao))
-    if eh_admin(user_id):
-        return True
     perfil = obter_perfil(user_id)
     return bool(perfil and perfil.get("aprovado") and perfil.get(permissao))
 
@@ -656,11 +670,6 @@ def atualizar_perfil(user_id, perfil):
         raise ValueError("Perfil contém campos inválidos.")
     if any(not isinstance(valor, bool) for chave, valor in perfil.items() if chave not in CHAVES_ESCOPO | {'modelo_perfil_id'}):
         raise ValueError("As permissões devem ser booleanas.")
-    if eh_admin(user_id):
-        if perfil.get("aprovado") is False:
-            raise ValueError("Não é possível bloquear o administrador principal.")
-        if set(perfil) & (set(PERMISSOES) | CHAVES_ESCOPO | {'modelo_perfil_id'}):
-            raise ValueError("As permissões do administrador principal não podem ser alteradas.")
     with _LOCK:
         dados = _carregar_arquivo()
         existente = dados["usuarios"].get(str(user_id))
@@ -668,6 +677,8 @@ def atualizar_perfil(user_id, perfil):
             raise ValueError("Usuário não encontrado.")
         perfil = _resolver_vinculo_modelo(dados, perfil)
         existente.update(perfil)
+        if eh_admin(user_id):
+            dados["perfil_teste_ativo"] = None
         if not existente.get('aprovado'):
             existente.update({chave: False for chave in PERMISSOES})
         _gravar_arquivo(dados)
@@ -771,8 +782,6 @@ def listar_usuarios():
 
 def obter_escopo_acesso(user_id):
     teste = perfil_teste_ativo(user_id)
-    if teste is None and eh_admin(user_id):
-        return {}
     perfil = teste if teste is not None else obter_perfil(user_id) or {}
     return {chave: perfil.get(chave) for chave in CHAVES_ESCOPO}
 

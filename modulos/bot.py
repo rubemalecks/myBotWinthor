@@ -21,11 +21,13 @@ from telegram.ext import (
 
 from modulos.database import consultar_produto, consultar_custos, pesquisar_produtos, produto_existe, listar_filiais_produto
 from modulos.leitor_barras import ler_codigo_barras
+from modulos.calculos import ganho_sobre_custo
+from modulos.formulas import explicar_formula
+from modulos.mensagens import renderizar_mensagem
 from modulos.rede import enderecos_painel
 from modulos.margem_departamento import (
     listar_departamentos, obter_departamento, listar_filiais_departamento,
     listar_regioes_ativas, calcular_margens_departamento, formatar_relatorio,
-    consultar_margens_departamento_produto,
 )
 from modulos.permissoes import (
     inicializar, eh_admin_bot as eh_admin, perfil_teste_ativo, pode_ver_custo, pode_ver_margem_produto, pode_ver_margem_departamento, tem_permissao,
@@ -100,7 +102,7 @@ async def verificar_acesso_consulta(update: Update):
     teste = await asyncio.to_thread(perfil_teste_ativo, update.effective_user.id)
     if teste is not None:
         perfil = teste
-    if eh_admin(update.effective_user.id) or perfil and perfil['aprovado']:
+    if perfil and perfil['aprovado']:
         return True
     registrar_consulta_log(update, 'acesso', 'NEGADO', motivo='Perfil aguardando aprovação ou bloqueado')
     await update.effective_message.reply_text(
@@ -124,12 +126,8 @@ def formatar_data(valor):
 
 
 def calcular_margem(preco_venda, custo_entrada):
-    if preco_venda is None or custo_entrada is None:
-        return None
-    preco, custo = Decimal(str(preco_venda)), Decimal(str(custo_entrada))
-    if preco <= 0:
-        return None
-    return f'{((preco - custo) / preco) * 100:.2f}'.replace('.', ',') + '%'
+    ganho = ganho_sobre_custo(preco_venda, custo_entrada)
+    return f'{ganho:.2f}'.replace('.', ',') + '%' if ganho is not None else None
 
 
 def validar_id(argumentos):
@@ -174,6 +172,7 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '🔎 Texto: pesquisa por nome e exibe até 10 opções.\n'
         '📸 Foto: leitura do código de barras.\n\n'
         '/start - Iniciar\n/ajuda - Ajuda\n/meuid - Meu ID\n'
+        '/formula - Explicar o cálculo por produto ou departamento\n'
     )
     if eh_admin(update.effective_user.id):
         mensagem += '\n🔐 Aprove usuários e configure cada perfil no painel administrativo da rede.\n'
@@ -193,6 +192,9 @@ async def comandos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '/ajuda - Ver ajuda\n'
         '/comandos - Ver comandos disponíveis\n'
         '/meuid - Consultar seu ID\n\n'
+        '/formula 1663 - Fórmula para um CODPROD\n'
+        '/formula ORGANNACT - Fórmula para um departamento\n'
+        '/formula departamento 108 - Departamento pelo código\n\n'
         '🔎 PESQUISAR PRODUTOS\n'
         '• Digite um código interno ou de barras\n'
         '• Digite parte do nome do produto\n'
@@ -210,6 +212,82 @@ async def comandos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if eh_admin(user_id):
         mensagem += '\n👑 ADMINISTRAÇÃO\n• Aprove usuários e configure permissões individuais no painel web\n'
     await enviar_mensagem(update, mensagem)
+
+
+async def comando_formula(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != 'private' or not await verificar_acesso_consulta(update):
+        return
+    termo = ' '.join(context.args).strip()
+    if not termo:
+        await update.effective_message.reply_text(
+            '📐 Exemplos:\n/formula 1663 — CODPROD\n/formula ORGANNACT — nome do departamento\n'
+            '/formula departamento 108 — código do departamento\n'
+            '/fomula também é aceito.\n\nO custo usado vem de PCEST.CUSTOULTENT; o preço vem de PCTABPR.PVENDA.')
+        return
+    modo = 'produto' if termo.isascii() and termo.isdecimal() else 'departamento'
+    partes = termo.split(maxsplit=1)
+    if partes[0].lower() in ('produto', 'departamento', 'depto'):
+        modo = 'produto' if partes[0].lower() == 'produto' else 'departamento'
+        termo = partes[1].strip() if len(partes) > 1 else ''
+    user_id = update.effective_user.id
+    permissao = 'ver_margem_produto' if modo == 'produto' else 'ver_margem_departamento'
+    if not await asyncio.to_thread(tem_permissao, user_id, permissao):
+        await update.effective_message.reply_text('⛔ Seu perfil não permite consultar esta fórmula.')
+        return
+    exibir_custo = await asyncio.to_thread(pode_ver_custo, user_id)
+    escopo = obter_escopo_acesso(user_id)
+    try:
+        if modo == 'produto':
+            if not termo.isascii() or not termo.isdecimal():
+                await update.effective_message.reply_text('Informe o CODPROD: /formula produto 1663')
+                return
+            if not await asyncio.to_thread(tem_permissao, user_id, 'consulta_preco') or not await asyncio.to_thread(tem_permissao, user_id, 'buscar_codprod'):
+                await update.effective_message.reply_text('⛔ Seu perfil não permite consulta por CODPROD.')
+                return
+            produtos = await consultar_com_log(update, 'formula_produto', consultar_produto, termo, ('codprod',), escopo, codprod=termo)
+            if not produtos:
+                await update.effective_message.reply_text('Produto não encontrado ou sem preço nas tabelas permitidas.')
+                return
+            custos = await consultar_com_log(update, 'formula_custos', consultar_custos, produtos[0]['codprod'], escopo, codprod=termo)
+            texto = renderizar_mensagem('formula_produto', descricao=produtos[0]['descricao'], codprod=produtos[0]['codprod'])
+            texto += 'Preço: PCTABPR.PVENDA. Custo de entrada: PCEST.CUSTOULTENT (valor registrado no WinThor).\n'
+            for custo in custos:
+                for produto in produtos:
+                    texto += f'\n🏢 Filial {custo["codfilial"]} · 📋 {produto["numregiao"]} — {produto["nome_tabela"]}\n'
+                    texto += explicar_formula(produto['pvenda'], custo['custoultent'], exibir_custo)
+            if not custos:
+                texto += '\nNenhum custo disponível nas filiais permitidas.'
+        else:
+            if not termo:
+                await update.effective_message.reply_text('Informe o nome ou código: /formula departamento 108')
+                return
+            departamentos = ([await asyncio.to_thread(obter_departamento, int(termo))]
+                             if termo.isascii() and termo.isdecimal() else await asyncio.to_thread(listar_departamentos, termo))
+            departamentos = [item for item in departamentos if item]
+            if len(departamentos) != 1:
+                texto = 'Departamento não encontrado.' if not departamentos else 'Há mais de um departamento. Escolha pelo código:\n' + '\n'.join(
+                    f'/formula departamento {item["codepto"]} — {item["descricao"]}' for item in departamentos[:20])
+                await enviar_mensagem(update, texto)
+                return
+            depto = departamentos[0]
+            filiais = await asyncio.to_thread(listar_filiais_departamento, depto['codepto'], escopo)
+            texto = renderizar_mensagem('formula_departamento', codigo=depto['codepto'], departamento=depto['descricao'])
+            texto += 'Somas de PCTABPR.PVENDA e PCEST.CUSTOULTENT, para uma unidade por produto válido.\n'
+            for filial in filiais:
+                linhas = await consultar_com_log(update, 'formula_departamento', calcular_margens_departamento,
+                    depto['codepto'], filial['codfilial'], None, escopo, departamento=depto['codepto'], filial=filial['codfilial'])
+                for linha in linhas:
+                    texto += f'\n🏢 Filial {filial["codfilial"]} · 📋 {linha["numregiao"]} — {linha["nome_tabela"]}\n'
+                    texto += explicar_formula(linha['total_precos'], linha['total_custos'], exibir_custo, agregado=True)
+            if not filiais:
+                texto += '\nNenhuma filial autorizada disponível para o departamento.'
+        if not exibir_custo:
+            texto += '\n🔐 Valores e substituição numérica ocultos: exigem a permissão Ver custos detalhados.\n'
+        texto += '\nℹ️ Estimativa bruta sobre o custo, antes de impostos e outras despesas.'
+        await enviar_mensagem(update, texto)
+    except Exception:
+        logger.exception('Erro ao consultar fórmula de produto/departamento')
+        await update.effective_message.reply_text('⚠️ Não foi possível consultar a fórmula no WinThor.')
 
 
 async def meu_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -319,38 +397,34 @@ async def comando_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def montar_mensagem_precos(produtos, incluir_programado=False):
     primeiro = produtos[0]
-    mensagem = (f'📦 CONSULTA DE PRODUTO\n\n🏷️ {primeiro["descricao"]}\n'
-                f'🔢 Código: {primeiro["codprod"]}\n\n')
+    mensagem = renderizar_mensagem('produto', descricao=primeiro['descricao'], codprod=primeiro['codprod'])
     for i, item in enumerate(produtos):
         if i:
             mensagem += '\n━━━━━━━━━━━━━━━━━━━━\n\n'
         nome_tabela = item['nome_tabela']
         if len(produtos) > 1:
             nome_tabela = f'{item["numregiao"]} - {nome_tabela}'
-        mensagem += (f'📋 {nome_tabela}\n\n💰 PREÇO DE VENDA\n'
-                     f'➡️ {formatar_moeda(item["pvenda"])}\n')
+        mensagem += renderizar_mensagem('preco', tabela=nome_tabela, regiao=item['numregiao'], preco=formatar_moeda(item['pvenda']))
         if incluir_programado:
-            mensagem += f'\n▫️ Programado: {formatar_moeda(item["ptabela"])}\n'
+            mensagem += renderizar_mensagem('programado', programado=formatar_moeda(item['ptabela']))
     return mensagem
 
 
 def montar_mensagem_custos(custos, produtos):
     if not custos:
-        return '\n🔐 INFORMAÇÕES RESTRITAS\n\nNenhum registro de custo encontrado.'
-    mensagem = '\n━━━━━━━━━━━━━━━━━━━━\n🔐 INFORMAÇÕES RESTRITAS\n'
+        return renderizar_mensagem('custos_vazios')
+    mensagem = renderizar_mensagem('custos_titulo')
     varias_filiais = len(custos) > 1
     for item in custos:
         mensagem += '\n'
         if varias_filiais:
             mensagem += f'🏢 FILIAL {item["codfilial"]}\n\n'
-        mensagem += (f'📥 Custo última entrada: {formatar_moeda(item["custoultent"], 5)}\n'
-                     f'📅 Última entrada: {formatar_data(item["dtultent"])}\n')
+        mensagem += renderizar_mensagem('custos', custo=formatar_moeda(item['custoultent'], 5),
+            data_entrada=formatar_data(item['dtultent']), filial=item['codfilial'])
         if item['numtransent'] is not None:
-            mensagem += ('🚚 DADOS DA ENTRADA\n\n'
-                         f'📄 NF: {item["numnota"]}\n'
-                         f'🏭 Fornecedor: {item["codfornec"]} - {item["nome_fornecedor"] or "Não informado"}\n'
-                         f'📆 Emissão NF: {formatar_data(item["dtemissao"])}\n'
-                         f'🔢 Transação: {item["numtransent"]}\n')
+            mensagem += renderizar_mensagem('nota', nota=item['numnota'], codfornec=item['codfornec'],
+                fornecedor=item['nome_fornecedor'] or 'Não informado', emissao=formatar_data(item['dtemissao']),
+                transacao=item['numtransent'])
         else:
             mensagem += '📄 NF correspondente à data da última entrada não localizada.\n'
         if varias_filiais:
@@ -360,32 +434,17 @@ def montar_mensagem_custos(custos, produtos):
 
 def montar_mensagem_margens(custos, produtos):
     if not custos:
-        return '\n📈 MARGEM DO PRODUTO\n\nNão há custo disponível para calcular a margem do produto.'
-    mensagem = '\n━━━━━━━━━━━━━━━━━━━━\n📈 MARGEM DO PRODUTO\n'
+        return renderizar_mensagem('lucro_indisponivel')
+    mensagem = renderizar_mensagem('lucro_titulo')
     varias_filiais = len(custos) > 1
     for item in custos:
         if varias_filiais:
             mensagem += f'\n🏢 FILIAL {item["codfilial"]}\n'
         for produto in produtos:
             margem = calcular_margem(produto['pvenda'], item['custoultent'])
-            mensagem += (
-                f'\n📋 {produto["nome_tabela"]}\n'
-                f'📈 Margem: {margem or "Indisponível"}\n'
-            )
+            mensagem += renderizar_mensagem('lucro_produto', tabela=produto['nome_tabela'],
+                lucro=margem or 'Indisponível', filial=item['codfilial'])
     return mensagem
-
-
-def montar_mensagem_margem_departamento(linhas):
-    mensagem = '\n━━━━━━━━━━━━━━━━━━━━\n📊 MARGEM MÉDIA DO DEPARTAMENTO\n'
-    if not linhas:
-        return mensagem + '\nSem dados válidos para calcular a margem do departamento.\n'
-    mensagem += f'🏷️ Departamento: {linhas[0]["codepto"]}\n'
-    for item in linhas:
-        margem = calcular_margem(item['total_precos'], item['total_custos'])
-        mensagem += (f'\n🏢 Filial {item["codfilial"]} · 📋 {item["nome_tabela"]}\n'
-                     f'📈 Margem do departamento: {margem or "Indisponível"}\n'
-                     f'📦 Produtos considerados: {item["produtos_validos"]}\n')
-    return mensagem + '\nℹ️ Margem do mix: uma unidade por produto, antes de impostos e outras despesas.\n'
 
 
 async def perguntar_contexto_produto(update, context, codigo, origem, selecoes, tipo, opcoes):
@@ -396,7 +455,7 @@ async def perguntar_contexto_produto(update, context, codigo, origem, selecoes, 
               for i, (valor, rotulo) in enumerate(opcoes)]
     botoes.append([InlineKeyboardButton('Cancelar consulta', callback_data=f'pcsel:{token}:cancelar')])
     await update.effective_message.reply_text(
-        '🏢 Qual filial deseja consultar?' if tipo == 'filial' else '📋 Qual região/tabela de preço deseja consultar?',
+        renderizar_mensagem('perguntar_filial' if tipo == 'filial' else 'perguntar_regiao'),
         reply_markup=InlineKeyboardMarkup(botoes))
 
 
@@ -483,8 +542,7 @@ async def processar_codigo(update: Update, codigo: str, context=None, origem='ma
         if not produtos:
             existe = await asyncio.to_thread(produto_existe, codigo, campos_busca, escopo)
             await update.effective_message.reply_text(
-                '⚠️ Produto não está precificado em nenhuma tabela de preço permitida ao seu perfil.'
-                if existe else '❌ Produto não encontrado nas filiais permitidas ao seu perfil.')
+                renderizar_mensagem('sem_preco' if existe else 'nao_encontrado'))
             return
         preferencias = obter_opcoes_consulta(user_id)
         if context is not None and preferencias['perguntar_filial'] and 'filial' not in selecoes:
@@ -492,17 +550,23 @@ async def processar_codigo(update: Update, codigo: str, context=None, origem='ma
             if not filiais:
                 await update.effective_message.reply_text('Nenhuma filial permitida disponível para este produto.')
                 return
-            await perguntar_contexto_produto(update, context, codigo, origem, selecoes, 'filial',
-                [(str(item['codfilial']), f'Filial {item["codfilial"]}') for item in filiais])
-            return
+            opcoes = list({str(item['codfilial']): f'Filial {item["codfilial"]}' for item in filiais}.items())
+            if len(opcoes) > 1:
+                await perguntar_contexto_produto(update, context, codigo, origem, selecoes, 'filial', opcoes)
+                return
+            selecoes['filial'] = opcoes[0][0]
+            escopo['filiais_permitidas'] = [selecoes['filial']]
         if context is not None and preferencias['perguntar_regiao'] and 'regiao' not in selecoes:
             opcoes = list({str(item['numregiao']): f'{item["numregiao"]} — {item["nome_tabela"]}' for item in produtos}.items())
-            await perguntar_contexto_produto(update, context, codigo, origem, selecoes, 'regiao', opcoes)
-            return
+            if len(opcoes) > 1:
+                await perguntar_contexto_produto(update, context, codigo, origem, selecoes, 'regiao', opcoes)
+                return
+            selecoes['regiao'] = opcoes[0][0]
+            escopo['tabelas_permitidas'] = [selecoes['regiao']]
         ver_programado = await asyncio.to_thread(tem_permissao, user_id, 'ver_preco_programado')
         mensagem = montar_mensagem_precos(produtos, incluir_programado=ver_programado)
-        if selecoes:
-            mensagem += '\n' + ('🏢 Filial: ' + selecoes['filial'] + '\n' if 'filial' in selecoes else '')
+        if 'filial' in selecoes:
+            mensagem += renderizar_mensagem('filial', filial=selecoes['filial'])
         ver_custos = await asyncio.to_thread(pode_ver_custo, user_id)
         ver_margem = await asyncio.to_thread(pode_ver_margem_produto, user_id)
         if ver_custos or ver_margem:
@@ -517,20 +581,10 @@ async def processar_codigo(update: Update, codigo: str, context=None, origem='ma
             except Exception:
                 logger.exception('Erro na consulta restrita de custos')
                 mensagem += '\n🔐 INFORMAÇÕES DO PERFIL\n\n⚠️ Dados de custo/margem indisponíveis no momento.'
-        if await asyncio.to_thread(pode_ver_margem_departamento, user_id):
-            try:
-                margens_departamento = await consultar_com_log(
-                    update, 'margem_departamento_do_produto',
-                    consultar_margens_departamento_produto, produtos[0]['codprod'], escopo,
-                    codprod=produtos[0]['codprod'])
-                mensagem += montar_mensagem_margem_departamento(margens_departamento)
-            except Exception:
-                logger.exception('Erro ao consultar margem do departamento do produto')
-                mensagem += '\n📊 MARGEM MÉDIA DO DEPARTAMENTO\n⚠️ Indisponível no momento.\n'
         await enviar_mensagem(update, mensagem)
     except Exception:
         logger.exception('Erro na consulta do WinThor')
-        await update.effective_message.reply_text('⚠️ Não foi possível consultar o WinThor.')
+        await update.effective_message.reply_text(renderizar_mensagem('erro_consulta'))
 
 
 async def pesquisar_por_nome(update: Update, nome: str):
@@ -558,9 +612,7 @@ async def pesquisar_por_nome(update: Update, nome: str):
             if len(rotulo) > 60:
                 rotulo = rotulo[:57] + '...'
             botoes.append([InlineKeyboardButton(rotulo, callback_data=f'produto:{codigo}')])
-        mensagem = (f'🔎 Pesquisa: {nome}\n\n'
-                    f'📦 Exibindo {len(botoes)} produto(s).\n\n'
-                    '👇 Toque no produto desejado para consultar o preço.')
+        mensagem = renderizar_mensagem('pesquisa_nome', termo=nome, quantidade=len(botoes))
         if mais_de_dez:
             mensagem += ('\n\n⚠️ Foram encontrados mais de 10 produtos. '
                          'Estou mostrando os 10 primeiros. '
@@ -844,6 +896,7 @@ def executar_bot_telegram(token):
         app.add_handler(CommandHandler('ajuda', ajuda, filters=privado))
         app.add_handler(CommandHandler('comandos', comandos, filters=privado))
         app.add_handler(CommandHandler('meuid', meu_id, filters=privado))
+        app.add_handler(CommandHandler(['formula', 'fomula'], comando_formula, filters=privado))
         app.add_handler(CommandHandler('margem', comando_margem, filters=privado))
         app.add_handler(CommandHandler('cancelarmargem', cancelar_margem, filters=privado))
         app.add_handler(CallbackQueryHandler(

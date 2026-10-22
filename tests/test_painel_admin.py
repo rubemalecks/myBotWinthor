@@ -27,6 +27,40 @@ from modulos.painel_admin import app
 
 
 class PainelAdminTests(unittest.TestCase):
+    def test_personalizacao_exige_login_e_csrf(self):
+        anonimo = TestClient(app)
+        self.assertEqual(anonimo.get('/api/message-templates').status_code, 401)
+        self.assertEqual(anonimo.put('/api/message-templates', json={'templates': {'produto': 'Teste'}}).status_code, 401)
+        self.assertEqual(self.client.put('/api/message-templates', json={'templates': {'produto': 'Teste'}}).status_code, 403)
+        self.assertEqual(self.client.post('/api/message-templates/preview', json={'id': 'produto', 'texto': 'Teste'}).status_code, 403)
+
+    def test_personalizacao_salva_previsualiza_e_restaura(self):
+        headers = {'X-CSRF-Token': self.csrf}
+        resposta = self.client.get('/api/message-templates')
+        self.assertEqual(resposta.status_code, 200)
+        self.assertIn('produto', [modelo['id'] for modelo in resposta.json()['templates']])
+        previa = self.client.post('/api/message-templates/preview', headers=headers,
+            json={'id': 'produto', 'texto': 'Minha loja: {descricao} / {codprod}'})
+        self.assertEqual(previa.status_code, 200)
+        self.assertIn('PRODUTO DE EXEMPLO / 1663', previa.json()['texto'])
+        self.assertFalse(permissoes.ARQUIVO_DADOS.with_name('mensagens.json').exists())
+        resposta = self.client.put('/api/message-templates', headers=headers,
+            json={'templates': {'produto': 'Minha loja: {descricao}'}})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(permissoes.obter_mensagens_personalizadas()['produto'], 'Minha loja: {descricao}')
+        resposta = self.client.put('/api/message-templates', headers=headers, json={'templates': {'produto': None}})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(permissoes.obter_mensagens_personalizadas(), {})
+
+    def test_personalizacao_rejeita_campos_restritos_e_corpos_invalidos(self):
+        headers = {'X-CSRF-Token': self.csrf}
+        for corpo in ([], {'templates': []}, {'templates': {'preco': '{custo}'}}, {'templates': {'produto': ''}}):
+            with self.subTest(corpo=corpo):
+                self.assertEqual(self.client.put('/api/message-templates', headers=headers, json=corpo).status_code, 400)
+        for corpo in ({'id': [], 'texto': 'Teste'}, {'id': 'preco', 'texto': '{programado}'}, []):
+            with self.subTest(corpo=corpo):
+                self.assertEqual(self.client.post('/api/message-templates/preview', headers=headers, json=corpo).status_code, 400)
+
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         self.arquivo_original = permissoes.ARQUIVO_DADOS
@@ -74,6 +108,20 @@ class PainelAdminTests(unittest.TestCase):
         cliente = TestClient(app)
         resposta = cliente.get("/api/users")
         self.assertEqual(resposta.status_code, 401)
+
+    def test_admin_edita_proprio_acesso_sem_perder_painel(self):
+        headers = {'X-CSRF-Token': self.csrf}
+        resposta = self.client.put('/api/users/999', headers=headers, json={'aprovado': False})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertFalse(resposta.json()['aprovado'])
+        self.assertFalse(permissoes.tem_permissao(999, 'consulta_preco'))
+        self.assertEqual(self.client.get('/api/settings').status_code, 200)
+        self.assertEqual(self.client.get('/api/users').status_code, 200)
+        resposta = self.client.put('/api/users/999', headers=headers,
+            json={'aprovado': True, 'consulta_preco': True, 'ver_custos': False})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertTrue(permissoes.tem_permissao(999, 'consulta_preco'))
+        self.assertFalse(permissoes.tem_permissao(999, 'ver_custos'))
 
     def test_catalogo_filiais_regioes_exige_login_e_consulta_oracle(self):
         self.assertEqual(TestClient(app).get('/api/access-options').status_code, 401)

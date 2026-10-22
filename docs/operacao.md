@@ -20,25 +20,26 @@ C:\Sistemas\
 └── myBotWinthor-dados\            ← dados persistentes; copiar no backup
     ├── config_bot.json           ← Telegram e opções do painel
     ├── config_oracle.json        ← servidor e credenciais Oracle
-    └── dados_bot.json            ← usuários, perfis, permissões e hash da senha
+    ├── dados_bot.json            ← usuários, perfis, permissões e hash da senha
+    └── mensagens.json            ← respostas personalizadas, criado ao salvar no painel
 ```
 
 Se `BOT_DATA_DIR` estiver preenchido no `.env`, **esse caminho substitui a pasta padrão**. Caminhos relativos são resolvidos a partir da pasta do projeto. Para consultar o caminho efetivo, abra **Bot → Armazenamento** no painel. Renomear ou mover a pasta do projeto pode mudar o caminho padrão; configure `BOT_DATA_DIR` para manter um local fixo.
 
-Os JSONs são lidos nas operações do sistema e gravados por arquivo temporário seguido de substituição do arquivo de destino. Isso protege cada gravação individual, mas **não cria histórico, cópia de segurança ou uma transação conjunta dos três arquivos**. A senha do painel é armazenada como hash; token do Telegram e senha Oracle permanecem como texto nos arquivos de configuração. Restrinja o acesso à pasta e não publique seus arquivos no Git.
+Os JSONs são lidos nas operações do sistema e gravados por arquivo temporário seguido de substituição do arquivo de destino. Isso protege cada gravação individual, mas **não cria histórico, cópia de segurança ou uma transação conjunta dos arquivos**. A senha do painel é armazenada como hash; token do Telegram e senha Oracle permanecem como texto nos arquivos de configuração. Restrinja o acesso à pasta e não publique seus arquivos no Git.
 
 ### Onde guardar o backup
 
 **Pasta sugerida, criada por você:** `C:\Backups\myBotWinthor\AAAA-MM-DD_HH-mm-ss\`. Esse caminho é apenas uma sugestão, não um destino configurado ou usado automaticamente pela API. Mantenha também uma cópia em outro disco ou local protegido para cobrir falha do computador.
 
-O backup deve conter **a pasta de dados inteira, com os três JSONs da mesma parada do sistema**. Preserve também uma cópia do `.env` em local protegido para recuperar `BOT_DATA_DIR` e as opções de inicialização. A pasta `oracle_client` contém bibliotecas de execução, não o banco Oracle.
+O backup deve conter **a pasta de dados inteira, com os JSONs da mesma parada do sistema**, incluindo `mensagens.json` quando houver personalizações. Preserve também uma cópia do `.env` em local protegido para recuperar `BOT_DATA_DIR` e as opções de inicialização. A pasta `oracle_client` contém bibliotecas de execução, não o banco Oracle.
 
 ### Como fazer o backup manual
 
 1. Pare o bot/painel com **Ctrl+C** ou pare o serviço do Windows, se a execução for por serviço. Confirme que não há outra instância gravando.
 2. Confira o caminho efetivo da pasta de dados.
 3. Copie a pasta inteira para uma nova pasta de backup identificada por data e hora.
-4. Confira se `config_bot.json`, `config_oracle.json` e `dados_bot.json` estão na cópia.
+4. Confira se `config_bot.json`, `config_oracle.json` e `dados_bot.json` estão na cópia. Se personalizou as respostas, confira também `mensagens.json`.
 5. Inicie o projeto novamente. Faça isso antes de atualizações, migrações e alterações manuais nos JSONs.
 
 Exemplo de cópia no PowerShell, **com o projeto parado**. Ajuste a origem para o caminho real da sua instalação:
@@ -57,7 +58,7 @@ Os comandos acima copiam os dados locais; **não fazem backup do banco Oracle**.
 ### Como restaurar ou migrar para outro computador
 
 1. Pare o bot e o serviço antes de restaurar. Guarde uma cópia dos dados atuais para permitir retorno.
-2. Copie o backup completo para uma pasta de dados no computador de destino, mantendo os três JSONs juntos.
+2. Copie o backup completo para uma pasta de dados no computador de destino, mantendo todos os JSONs juntos.
 3. No `.env`, aponte `BOT_DATA_DIR` para essa pasta. Exemplo:
 
    ```dotenv
@@ -95,7 +96,7 @@ Para transferir os cadastros, copie **`dados_bot.json`**. Esse arquivo contém u
    BOT_DATA_DIR=D:/Sistemas/myBotWinthor-dados
    ```
 
-6. Para manter também o token, o ID do administrador, as opções do painel e a conexão Oracle, copie **a pasta de dados inteira**, com `config_bot.json`, `config_oracle.json` e `dados_bot.json`. Se copiar somente os usuários, as configurações da origem não serão transferidas; configure Telegram e Oracle no destino e confirme qual ID deve ser o administrador principal.
+6. Para manter também o token, o ID do administrador, as opções do painel, a conexão Oracle e as mensagens personalizadas, copie **a pasta de dados inteira**, incluindo `mensagens.json` se existir. Se copiar somente os usuários, as configurações da origem não serão transferidas; configure Telegram e Oracle no destino e confirme qual ID deve ser o administrador principal.
 7. Na pasta do projeto de destino, execute:
 
    ```powershell
@@ -190,8 +191,9 @@ As guias **Bot** e **Servidor Oracle** possuem salvamento e testes independentes
 - `config_bot.json`: Telegram e opções do painel.
 - `config_oracle.json`: servidor, usuário, senha e demais opções Oracle.
 - `dados_bot.json`: usuários, perfis, permissões e hash da senha do painel.
+- `mensagens.json`: padrões de resposta personalizados pela guia **Personalização**, criado no primeiro salvamento. Copie também este arquivo para conservar as mensagens ao migrar ou restaurar a instalação.
 
-Na primeira inicialização após atualizar, as configurações do antigo JSON único são transferidas automaticamente para os novos arquivos. Faça backup dos três arquivos; as credenciais continuam armazenadas nos JSONs de configuração. Alterações manuais devem ser feitas com o bot parado.
+Na primeira inicialização após atualizar, as configurações do antigo JSON único são transferidas automaticamente para os novos arquivos. Faça backup da pasta de dados inteira; as credenciais continuam armazenadas nos JSONs de configuração. Alterações manuais devem ser feitas com o bot parado.
 
 Quando uma pessoa envia `/start`, seu ID do Telegram é registrado como pendente. O administrador entra no painel pelo endereço IP anunciado no log do bot (porta padrão `8765`), faz login e salva a aprovação e as permissões daquele usuário. Por padrão, o painel escuta nas interfaces de rede do computador que executa o bot (`WEB_ADMIN_HOST=0.0.0.0`).
 
@@ -208,7 +210,7 @@ O controle de cada perfil inclui:
 A antiga permissão `ver_margem` é migrada para as duas permissões, preservando o acesso existente. Depois, cada opção pode ser alterada independentemente no painel.
 - `ver_custos`: exibir custos e dados da última entrada.
 
-Os acessos a preço, foto e margem/custos exigem que o perfil esteja aprovado. A permissão de margem não revela o valor do custo; isso é controlado separadamente por `ver_custos`. O administrador definido em `TELEGRAM_ADMIN_ID` mantém acesso total.
+Os acessos a preço, foto e margem/custos exigem que o perfil esteja aprovado. A permissão de margem não revela o valor do custo; isso é controlado separadamente por `ver_custos`. O administrador definido em `TELEGRAM_ADMIN_ID` recebe acesso total no primeiro cadastro e pode ter suas permissões, modelos, filiais e tabelas personalizados como qualquer usuário. As escolhas permanecem salvas e não alteram o login administrativo do painel.
 
 ## Persistência e migração
 

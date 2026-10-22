@@ -19,6 +19,7 @@ from telegram.error import InvalidToken, NetworkError, TelegramError
 
 from modulos.database import ErroAcessoWinthor, testar_conexao_oracle, listar_opcoes_acesso
 from modulos.escopo import CHAVES_ESCOPO
+from modulos.mensagens import listar_modelos, salvar_modelos, previa_modelo, LIMITE_MODELO
 from modulos.permissoes import (
     CHAVES_CONFIGURACAO,
     CHAVES_SECRETAS,
@@ -183,11 +184,22 @@ PAGINA = """<!doctype html>
     #login .password-control input { padding-right:82px; }
     .password-toggle { position:absolute; right:7px; top:13px; background:transparent;
       color:var(--accent); font-size:.78rem; padding:6px 8px; }
+    .oracle-private-control input:not([type=checkbox]) { padding-right:82px; }
+    .oracle-private-control .password-toggle { top:10px; }
     #login-submit { width:100%; min-height:44px; margin-top:2px; font-size:.95rem; }
     #login-error { color:#ffb4b9; background:#a52b351a; border:1px solid #b8445055;
       padding:10px 12px; border-radius:8px; margin:0; font-size:.85rem; }
     :root[data-theme="light"] #login-error { color:#a52b35; }
     #login-error:empty { display:none; }
+    .message-layout { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:18px; }
+    .message-editor select,.message-editor textarea { width:100%; box-sizing:border-box; background:var(--field); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:10px; font:inherit; margin:6px 0 12px; }
+    .message-editor textarea { min-height:220px; resize:vertical; font-family:Consolas,monospace; line-height:1.5; }
+    .message-variables { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 12px; }
+    .message-variables button { font-size:.8rem; padding:5px 8px; }
+    #message-preview { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--field); border:1px solid var(--border); border-radius:10px; padding:16px; min-height:180px; line-height:1.6; }
+    #message-error { color:var(--accent); }
+    #message-error:empty { display:none; }
+    @media(max-width:720px) { .message-layout { grid-template-columns:1fr; } }
     #caps-warning { display:block; font-size:.78rem; color:var(--muted); margin-top:6px; }
     body:has(#dashboard[hidden]) .brand-footer { padding-top:14px; }
     @media(max-width:480px) { #login { padding:24px 20px; margin:28px auto; } }
@@ -227,6 +239,7 @@ PAGINA = """<!doctype html>
         <button id="tab-oracle" type="button" role="tab" aria-selected="false" aria-controls="panel-oracle" tabindex="-1">Servidor Oracle</button>
         <button id="tab-profiles" type="button" role="tab" aria-selected="false" aria-controls="panel-profiles" tabindex="-1">Perfis e permissões</button>
         <button id="tab-templates" type="button" role="tab" aria-selected="false" aria-controls="panel-templates" tabindex="-1">Modelos de perfil</button>
+        <button id="tab-personalization" type="button" role="tab" aria-selected="false" aria-controls="panel-personalization" tabindex="-1">Personalização</button>
       </div>
     <button id="logout" class="secondary" type="button">Sair</button>
     </nav>
@@ -283,14 +296,18 @@ PAGINA = """<!doctype html>
       <form id="oracle-settings-form" method="post" action="/api/settings" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other">
 <fieldset><legend>Oracle / WinThor</legend><div class="fields-grid">
         <div class="field"><label for="oracle-host">Host do Oracle</label>
+        <div class="password-control oracle-private-control">
         <input id="oracle-host" type="text" placeholder="192.168.0.10" aria-describedby="oracle-host-help" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other">
+        <button id="toggle-oracle-host" type="button" class="password-toggle" aria-controls="oracle-host" aria-label="Ocultar host do Oracle" aria-pressed="true">Ocultar</button></div>
         <small id="oracle-host-help" class="muted">IPv4 com pontos ou nome do servidor. Use ponto para avançar em grupos menores que 3 dígitos.</small></div>
         <div class="field"><label for="oracle-port">Porta do Oracle</label>
         <input id="oracle-port" type="number" min="1" max="65535" required autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other"></div>
         <div class="field"><label for="oracle-service">Service name</label>
         <input id="oracle-service" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other"></div>
         <div class="field"><label for="oracle-user">Usuário do Oracle</label>
-        <input id="oracle-user" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other"></div>
+        <div class="password-control oracle-private-control">
+        <input id="oracle-user" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other">
+        <button id="toggle-oracle-user" type="button" class="password-toggle" aria-controls="oracle-user" aria-label="Ocultar usuário do Oracle" aria-pressed="true">Ocultar</button></div></div>
         <div class="field"><label for="oracle-password">Senha do Oracle (opcional para substituir)</label>
         <input id="oracle-password" type="password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other"></div>
         </div></fieldset><div class="form-actions"><button type="submit">SALVAR E TESTAR ORACLE</button></div>
@@ -314,8 +331,8 @@ PAGINA = """<!doctype html>
       <button id="refresh-users" type="button" class="secondary">Atualizar usuários</button>
       <section class="card">
         <h2>Acesso do administrador</h2>
-        <p class="muted compact-help">O ID informado na guia Bot é pré-cadastrado com todas as permissões. Não é necessário cadastrá-lo novamente. Perfis de teste antigos são independentes desse cadastro.</p>
-        <button id="restore-admin" type="button" class="secondary">Usar acesso total do administrador</button>
+        <p class="muted compact-help">O administrador é pré-cadastrado e pode ter suas permissões do bot editadas como qualquer usuário. Seu acesso ao painel é independente. Perfis de teste antigos são independentes desse cadastro.</p>
+        <button id="restore-admin" type="button" class="secondary">Encerrar perfil de teste</button>
         <p id="test-profile-status" role="status"></p>
       </section>
       <p id="users-status" class="muted" role="status"></p>
@@ -333,6 +350,31 @@ PAGINA = """<!doctype html>
         </form>
       </section><div id="profile-templates"></div>
     </div>
+    <div id="panel-personalization" role="tabpanel" aria-labelledby="tab-personalization" tabindex="0" hidden>
+      <section class="card">
+        <h2>Mensagens do bot</h2>
+        <p class="muted compact-help">Personalize o padrão de retorno para seus clientes. Consultas por código, foto e nome usam os mesmos blocos de produto. Custos, lucro e preço programado continuam dependendo das permissões do usuário.</p>
+        <div class="message-layout">
+          <form id="message-form" class="message-editor" autocomplete="off">
+            <label for="message-template">Tipo de mensagem</label>
+            <select id="message-template" required></select>
+            <label for="message-content">Texto da mensagem</label>
+            <textarea id="message-content" rows="9" maxlength="2500" required spellcheck="false" aria-describedby="message-hint message-counter"></textarea>
+            <small id="message-counter" class="muted"></small>
+            <p id="message-hint" class="muted compact-help">Clique em uma variável para inseri-la no texto. Mantenha as chaves, como {descricao}. Quebras de linha e emojis são permitidos.</p>
+            <div id="message-variables" class="message-variables" role="group" aria-label="Variáveis disponíveis"></div>
+            <p id="message-error" role="alert"></p>
+            <div class="form-actions"><button id="message-save" type="submit">Salvar mensagem</button>
+              <button id="message-reset" type="button" class="secondary">Restaurar padrão</button></div>
+            <small class="muted">O padrão restaurado só será aplicado depois de salvar. Alterações valem nas próximas consultas, sem reiniciar.</small>
+          </form>
+          <div><h3>Prévia deste bloco</h3>
+            <p class="muted compact-help">Dados fictícios para ilustrar o texto. O resultado completo combina os blocos autorizados para cada usuário.</p>
+            <div id="message-preview" role="status" aria-live="polite"></div>
+          </div>
+        </div>
+      </section>
+    </div>
   </main>
   <footer class="brand-footer">
     <small>Desenvolvido por</small>
@@ -346,13 +388,29 @@ PAGINA = """<!doctype html>
         const position = field.selectionStart;
         const before = field.value;
         field.value = removeSpaces(before);
-        if (position !== null && field.type === "text") {
+        if (position !== null && ["text", "password"].includes(field.type)) {
           const removed = before.slice(0, position).length - removeSpaces(before.slice(0, position)).length;
           field.setSelectionRange(position - removed, position - removed);
         }
       });
     }
     const hostField = document.getElementById("oracle-host");
+    function definirVisibilidadeOracle(id, visible) {
+      const field = document.getElementById(id);
+      const button = document.getElementById(`toggle-${id}`);
+      field.type = visible ? "text" : "password";
+      button.textContent = visible ? "Ocultar" : "Mostrar";
+      button.setAttribute("aria-pressed", String(visible));
+      button.setAttribute("aria-label", `${visible ? "Ocultar" : "Mostrar"} ${id === "oracle-host" ? "host" : "usuário"} do Oracle`);
+    }
+    function ocultarDadosOracle() {
+      for (const id of ["oracle-host", "oracle-user"]) definirVisibilidadeOracle(id, false);
+    }
+    for (const id of ["oracle-host", "oracle-user"]) {
+      document.getElementById(`toggle-${id}`).addEventListener("click", () => {
+        definirVisibilidadeOracle(id, document.getElementById(id).type === "password");
+      });
+    }
     hostField.addEventListener("input", event => {
       const value = hostField.value;
       if (event.inputType !== "insertText" || !/^[0-9]$/.test(event.data || "") ||
@@ -368,6 +426,9 @@ PAGINA = """<!doctype html>
         item.setAttribute("aria-selected", String(selected));
         item.tabIndex = selected ? 0 : -1;
         document.getElementById(item.getAttribute("aria-controls")).hidden = !selected;
+      }
+      if (tab.id === "tab-personalization") {
+        carregarPersonalizacao().catch(error => { notificarTemporariamente(error.message, 10000); });
       }
     }
     tabs.forEach((tab, index) => {
@@ -392,23 +453,19 @@ PAGINA = """<!doctype html>
     setTheme(savedTheme === "light" ? "light" : "dark");
     themeToggle.addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
     const status = document.querySelector("#status");
-    let notificationTimer;
-    let notificationObserver;
-    function notificarTemporariamente(message, duration = 5000) {
-      window.clearTimeout(notificationTimer);
-      if (notificationObserver) notificationObserver.disconnect();
-      status.textContent = message;
-      // Cancela o desaparecimento se outra operação atualizar a mensagem.
-      const observer = new MutationObserver(() => {
-        window.clearTimeout(notificationTimer);
-        observer.disconnect();
-      });
-      notificationObserver = observer;
-      observer.observe(status, {childList:true, characterData:true, subtree:true});
-      notificationTimer = window.setTimeout(() => {
-        observer.disconnect();
-        if (status.textContent === message) status.textContent = "";
+    const notificationTimers = new WeakMap();
+    function notificarTemporariamente(message, duration = 2500, target = status) {
+      window.clearTimeout(notificationTimers.get(target));
+      notificationTimers.delete(target);
+      target.textContent = message;
+      // Uma operação em andamento usa duração zero, até chegar seu resultado.
+      if (!message || duration <= 0) return;
+      const timer = window.setTimeout(() => {
+        if (notificationTimers.get(target) !== timer) return;
+        target.textContent = "";
+        notificationTimers.delete(target);
       }, duration);
+      notificationTimers.set(target, timer);
     }
     const login = document.querySelector("#login");
     const dashboard = document.querySelector("#dashboard");
@@ -442,6 +499,98 @@ PAGINA = """<!doctype html>
       }
       return response.status === 204 ? null : response.json();
     }
+
+    const messageSelect = document.getElementById("message-template");
+    const messageContent = document.getElementById("message-content");
+    const messagePreview = document.getElementById("message-preview");
+    const messageError = document.getElementById("message-error");
+    let messageTemplates = [];
+    const messageDrafts = new Map();
+    let previewTimer;
+    let previewVersion = 0;
+    function atualizarPreviaMensagem() {
+      window.clearTimeout(previewTimer);
+      const version = ++previewVersion;
+      const id = messageSelect.value;
+      const texto = messageContent.value;
+      messageError.textContent = "";
+      document.getElementById("message-counter").textContent = `${texto.length} / ${messageContent.maxLength} caracteres`;
+      messagePreview.textContent = "Atualizando prévia…";
+      previewTimer = window.setTimeout(async () => {
+        try {
+          const result = await request("/api/message-templates/preview", {method:"POST", body:JSON.stringify({id, texto})});
+          if (version !== previewVersion) return;
+          messagePreview.textContent = result.texto;
+        } catch (error) {
+          if (version !== previewVersion) return;
+          messagePreview.textContent = "Corrija o texto para visualizar a mensagem.";
+          messageError.textContent = error.message;
+        }
+      }, 250);
+    }
+    function mostrarEditorMensagem() {
+      const model = messageTemplates.find(item => item.id === messageSelect.value);
+      if (!model) return;
+      messageContent.value = messageDrafts.has(model.id) ? messageDrafts.get(model.id) : model.texto;
+      const variables = document.getElementById("message-variables"); variables.replaceChildren();
+      for (const [name, example] of Object.entries(model.exemplo)) {
+        const button = document.createElement("button"); button.type = "button"; button.className = "secondary";
+        button.textContent = `{${name}}`; button.title = `Exemplo: ${example}`;
+        button.addEventListener("click", () => {
+          const variable = `{${name}}`;
+          if (messageContent.value.length - (messageContent.selectionEnd - messageContent.selectionStart) + variable.length > messageContent.maxLength) return;
+          messageContent.setRangeText(variable, messageContent.selectionStart, messageContent.selectionEnd, "end");
+          messageContent.focus(); messageContent.dispatchEvent(new Event("input"));
+        });
+        variables.append(button);
+      }
+      if (!Object.keys(model.exemplo).length) variables.textContent = "Este aviso aceita somente texto livre.";
+      atualizarPreviaMensagem();
+    }
+    async function carregarPersonalizacao() {
+      const result = await request("/api/message-templates");
+      const selected = messageSelect.value;
+      messageTemplates = result.templates;
+      messageContent.maxLength = result.limite;
+      messageSelect.replaceChildren();
+      const groups = new Map();
+      for (const model of messageTemplates) {
+        if (!groups.has(model.grupo)) {
+          const group = document.createElement("optgroup"); group.label = model.grupo;
+          groups.set(model.grupo, group); messageSelect.append(group);
+        }
+        const option = document.createElement("option"); option.value = model.id;
+        option.textContent = model.titulo + (model.personalizado ? " · Personalizado" : "");
+        groups.get(model.grupo).append(option);
+      }
+      if (messageTemplates.some(item => item.id === selected)) messageSelect.value = selected;
+      mostrarEditorMensagem();
+    }
+    messageSelect.addEventListener("change", mostrarEditorMensagem);
+    messageContent.addEventListener("input", () => {
+      messageDrafts.set(messageSelect.value, messageContent.value); atualizarPreviaMensagem();
+    });
+    document.getElementById("message-reset").addEventListener("click", () => {
+      const model = messageTemplates.find(item => item.id === messageSelect.value);
+      if (!model) return;
+      messageContent.value = model.padrao;
+      messageContent.dispatchEvent(new Event("input"));
+    });
+    document.getElementById("message-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const model = messageTemplates.find(item => item.id === messageSelect.value);
+      if (!model) return;
+      const fields = [...event.currentTarget.querySelectorAll("input,select,textarea,button")];
+      fields.forEach(field => { field.disabled = true; });
+      try {
+        const texto = messageContent.value === model.padrao ? null : messageContent.value;
+        await request("/api/message-templates", {method:"PUT", body:JSON.stringify({templates:{[model.id]:texto}})});
+        messageDrafts.delete(model.id);
+        await carregarPersonalizacao();
+        notificarTemporariamente("Mensagem salva. O bot já usará o novo padrão.");
+      } catch (error) { notificarTemporariamente(error.message, 10000); }
+      finally { fields.forEach(field => { field.disabled = false; }); }
+    });
 
     let checkingConnections = false;
     function renderConnections(checks) {
@@ -512,7 +661,7 @@ PAGINA = """<!doctype html>
       select.value = vinculo || "";
       for (const input of Object.values(checks)) input.addEventListener("change", () => {
         if (!aplicando) {
-          if (vinculo) status.textContent = "Permissões personalizadas: o vínculo será removido ao salvar. Reaplique o modelo para manter o vínculo.";
+          if (vinculo) notificarTemporariamente("Permissões personalizadas: o vínculo será removido ao salvar. Reaplique o modelo para manter o vínculo.");
           vinculo = null; select.value = "";
         }
       });
@@ -522,7 +671,7 @@ PAGINA = """<!doctype html>
         const modelo = modelosPerfil.find(item => item.id === select.value);
         if (!modelo) {
           vinculo = null;
-          status.textContent = "Vínculo removido do formulário. Salve o perfil para manter permissões personalizadas.";
+          notificarTemporariamente("Vínculo removido do formulário. Salve o perfil para manter permissões personalizadas.");
           return;
         }
         aplicando = true;
@@ -532,7 +681,7 @@ PAGINA = """<!doctype html>
         }
         if (Object.values(checks).some(input => input.checked)) approved.checked = true;
         aplicando = false; vinculo = modelo.id;
-        status.textContent = `Modelo ${modelo.nome} vinculado ao formulário. Salve para confirmar e receber atualizações futuras do modelo.`;
+        notificarTemporariamente(`Modelo ${modelo.nome} vinculado ao formulário. Salve para confirmar e receber atualizações futuras do modelo.`);
       });
       label.append(select); group.append(label, apply); container.append(group);
       const obter = () => vinculo;
@@ -605,25 +754,25 @@ PAGINA = """<!doctype html>
           save.disabled = true;
           try {
             await request(`/api/profile-templates/${modelo.id}`, {method:"PUT", body:JSON.stringify({...lerEscopo(), nome:name.value, permissoes:Object.fromEntries(Object.entries(checks).map(([key, input]) => [key, input.checked]))})});
-            await carregarModelosPerfil(); status.textContent = "Modelo salvo. Permissões dos usuários vinculados atualizadas automaticamente.";
-          } catch (error) { status.textContent = error.message; } finally { save.disabled = false; }
+            await carregarModelosPerfil(); notificarTemporariamente("Modelo salvo. Permissões dos usuários vinculados atualizadas automaticamente.");
+          } catch (error) { notificarTemporariamente(error.message, 10000); } finally { save.disabled = false; }
         });
         const remove = document.createElement("button"); remove.type = "button"; remove.className = "danger"; remove.textContent = "Remover modelo";
         remove.addEventListener("click", async () => {
           if (!window.confirm(`Remover o modelo ${modelo.nome}? Usuários existentes serão preservados.`)) return;
           try { await request(`/api/profile-templates/${modelo.id}`, {method:"DELETE"}); await carregarModelosPerfil(); }
-          catch (error) { status.textContent = error.message; }
+          catch (error) { notificarTemporariamente(error.message, 10000); }
         });
         const actions = document.createElement("div"); actions.className = "row"; actions.append(save, remove); card.append(actions); container.append(card);
       }
     }
-    document.querySelector("#tab-templates").addEventListener("click", () => carregarModelosPerfil().catch(error => { status.textContent = error.message; }));
+    document.querySelector("#tab-templates").addEventListener("click", () => carregarModelosPerfil().catch(error => { notificarTemporariamente(error.message, 10000); }));
     document.querySelector("#template-create-form").addEventListener("submit", async event => {
       event.preventDefault(); const form = event.currentTarget; const button = form.querySelector("button"); button.disabled = true;
       try {
         await request("/api/profile-templates", {method:"POST", body:JSON.stringify({nome:document.querySelector("#template-name").value, permissoes:{}})});
-        form.reset(); await carregarModelosPerfil(); status.textContent = "Modelo criado. Abra-o, selecione as permissões e salve.";
-      } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
+        form.reset(); await carregarModelosPerfil(); notificarTemporariamente("Modelo criado. Abra-o, selecione as permissões e salve.");
+      } catch (error) { notificarTemporariamente(error.message, 10000); } finally { button.disabled = false; }
     });
 
     function adicionarMarcarTodos(container, checks, approved = null) {
@@ -665,25 +814,7 @@ PAGINA = """<!doctype html>
         details.textContent = `ID ${user.telegram_id}` +
           (user.username ? ` · @${user.username}` : "") +
           (user.ultimo_acesso ? ` · Último acesso: ${user.ultimo_acesso}` : "");
-        if (user.administrador) {
-          const note = document.createElement("p");
-          note.className = "approved";
-          note.textContent = "Administrador principal · acesso total";
-          const explanation = document.createElement("p");
-          explanation.className = "muted";
-          explanation.textContent = "O administrador principal tem todas as permissões. Os controles de acesso aparecem nos demais perfis.";
-          const preferences = document.createElement("div"); preferences.className = "row";
-          const filial = criarCampo(preferences, "Perguntar filial", user.perguntar_filial);
-          const regiao = criarCampo(preferences, "Perguntar região/tabela de preço", user.perguntar_regiao);
-          const save = document.createElement("button"); save.type = "button"; save.textContent = "Salvar preferências";
-          save.addEventListener("click", async () => {
-            try { await request(`/api/users/${user.telegram_id}`, {method:"PUT", body:JSON.stringify({perguntar_filial:filial.checked, perguntar_regiao:regiao.checked})}); notificarTemporariamente("Preferências salvas."); }
-            catch (error) { status.textContent = error.message; }
-          });
-          card.append(heading, details, note, explanation, preferences, save);
-          usersContainer.append(card);
-          continue;
-        }
+        if (user.administrador) heading.textContent += " \u00b7 Administrador";
         const statusLine = document.createElement("p");
         statusLine.textContent = user.aprovado ? "Aprovado" : "Pendente";
         statusLine.className = user.aprovado ? "approved" : "pending";
@@ -691,7 +822,7 @@ PAGINA = """<!doctype html>
         fields.className = "row";
         const access = document.createElement("div");
         access.className = "permissions-toolbar";
-        const approved = criarCampo(access, "Permitir acesso ao bot", user.aprovado, user.administrador);
+        const approved = criarCampo(access, "Permitir acesso ao bot", user.aprovado);
         const checks = {};
         for (const [key, label] of permissions) {
           checks[key] = criarCampo(fields, label, user[key]);
@@ -714,19 +845,21 @@ PAGINA = """<!doctype html>
             await request(`/api/users/${user.telegram_id}`, {
               method: "PUT", body: JSON.stringify(profile)
             });
-            status.textContent = "Perfil atualizado.";
+            notificarTemporariamente("Perfil atualizado.");
             await carregarUsuarios();
-          } catch (error) { status.textContent = error.message; }
+          } catch (error) { notificarTemporariamente(error.message, 10000); }
         });
         const remove = document.createElement("button");
         remove.type = "button"; remove.className = "danger"; remove.textContent = "Remover usuário";
+        remove.disabled = Boolean(user.administrador);
+        if (user.administrador) remove.title = "O administrador principal não pode ser excluído.";
         remove.addEventListener("click", async () => {
           if (!window.confirm(`Remover ${heading.textContent} (ID ${user.telegram_id})? Se iniciar o bot novamente, voltará como pendente.`)) return;
           remove.disabled = true;
           try {
             await request(`/api/users/${user.telegram_id}`, {method: "DELETE"});
             await carregarUsuarios(); notificarTemporariamente("Usuário removido.");
-          } catch (error) { status.textContent = error.message; }
+          } catch (error) { notificarTemporariamente(error.message, 10000); }
           finally { remove.disabled = false; }
         });
         const actions = document.createElement("div"); actions.className = "row";
@@ -741,10 +874,10 @@ PAGINA = """<!doctype html>
     }
 
     document.querySelector("#refresh-users").addEventListener("click", async () => {
-      try { await carregarUsuarios(); } catch (error) { status.textContent = error.message; }
+      try { await carregarUsuarios(); } catch (error) { notificarTemporariamente(error.message, 10000); }
     });
     document.querySelector("#tab-profiles").addEventListener("click", () => {
-      carregarUsuarios().catch(error => { status.textContent = error.message; });
+      carregarUsuarios().catch(error => { notificarTemporariamente(error.message, 10000); });
     });
     document.querySelector("#create-user-form").addEventListener("submit", async event => {
       event.preventDefault();
@@ -753,7 +886,7 @@ PAGINA = """<!doctype html>
       const telegramId = removeSpaces(idField.value);
       idField.value = telegramId;
       if (!/^[0-9]+$/.test(telegramId) || BigInt(telegramId) <= 0n || BigInt(telegramId) > 4503599627370496n) {
-        status.textContent = "Informe um ID válido do Telegram, somente com números. Peça ao usuário que envie /meuid ao bot.";
+        notificarTemporariamente("Informe um ID válido do Telegram, somente com números. Peça ao usuário que envie /meuid ao bot.", 10000);
         idField.focus();
         return;
       }
@@ -766,10 +899,10 @@ PAGINA = """<!doctype html>
         }) });
         form.reset();
         await carregarUsuarios();
-        status.textContent = result.administrador
-          ? "Administrador principal cadastrado com todas as permissões. Nenhum perfil de teste foi criado."
-          : "Perfil cadastrado. Configure o acesso e salve o perfil.";
-      } catch (error) { status.textContent = error.message; }
+        notificarTemporariamente(result.administrador
+          ? "Administrador cadastrado. As permissões personalizadas existentes foram preservadas."
+          : "Perfil cadastrado. Configure o acesso e salve o perfil.");
+      } catch (error) { notificarTemporariamente(error.message, 10000); }
       finally { button.disabled = false; }
     });
 
@@ -778,7 +911,7 @@ PAGINA = """<!doctype html>
       await carregarPerfisTeste();
     }
     document.querySelector("#restore-admin").addEventListener("click", () => {
-      acaoPerfilTeste("ativar").catch(error => { status.textContent = error.message; });
+      acaoPerfilTeste("ativar").catch(error => { notificarTemporariamente(error.message, 10000); });
     });
     async function carregarPerfisTeste() {
       const data = await request("/api/test-profiles");
@@ -787,7 +920,7 @@ PAGINA = """<!doctype html>
       const active = data.profiles.find(profile => profile.id === data.active);
       document.querySelector("#test-profile-status").textContent = active
         ? `Teste ativo: ${active.nome}. O bot usa as permissões deste perfil.`
-        : "Acesso total do administrador ativo.";
+        : "Perfil principal do administrador ativo.";
       for (const profile of data.profiles) {
         const card = document.createElement("details"); card.className = "card profile-item";
         card.setAttribute("name", "profile-list");
@@ -814,8 +947,8 @@ PAGINA = """<!doctype html>
             Object.assign(values, lerEscopo());
             if (approved.checked !== Boolean(profile.aprovado)) values.aprovado = approved.checked;
             await acaoPerfilTeste("salvar", profile.id, values);
-            status.textContent = "Permissões do perfil salvas.";
-          } catch (error) { status.textContent = error.message; }
+            notificarTemporariamente("Permissões do perfil salvas.");
+          } catch (error) { notificarTemporariamente(error.message, 10000); }
           finally { save.disabled = false; }
         });
         const actions = document.createElement("div"); actions.className = "row";
@@ -825,7 +958,7 @@ PAGINA = """<!doctype html>
           if (!window.confirm(`Remover o perfil ${profile.nome}?`)) return;
           remove.disabled = true;
           try { await acaoPerfilTeste("remover", profile.id); notificarTemporariamente("Perfil removido."); }
-          catch (error) { status.textContent = error.message; }
+          catch (error) { notificarTemporariamente(error.message, 10000); }
           finally { remove.disabled = false; }
         });
         actions.append(save, remove); editor.append(fields, actions);
@@ -846,6 +979,9 @@ PAGINA = """<!doctype html>
       };
       for (const [id, key] of Object.entries(campos)) {
         document.querySelector(`#${id}`).value = configuracaoAtual[key] || "";
+        if (id === "oracle-host" || id === "oracle-user") {
+          definirVisibilidadeOracle(id, !configuracaoAtual[key]);
+        }
       }
       document.querySelector("#telegram-bot-token").placeholder =
         configuracaoAtual.TELEGRAM_BOT_TOKEN_configured ? "Token salvo" : "Ainda não configurado";
@@ -891,11 +1027,11 @@ PAGINA = """<!doctype html>
         const result = await request(`/api/windows-service/${action}`, {
           method: "POST", body: "{}"
         });
-        status.textContent = result.message;
+        notificarTemporariamente(result.message);
         window.setTimeout(() => {
-          carregarServicoWindows().catch(error => { status.textContent = error.message; });
+          carregarServicoWindows().catch(error => { notificarTemporariamente(error.message, 10000); });
         }, 1500);
-      } catch (error) { status.textContent = error.message; }
+      } catch (error) { notificarTemporariamente(error.message, 10000); }
     }
 
     async function abrirPainel() {
@@ -931,7 +1067,7 @@ PAGINA = """<!doctype html>
       const button = document.querySelector("#login-submit");
       if (button.disabled) return;
       button.disabled = true; button.textContent = "Entrando…";
-      button.setAttribute("aria-busy", "true"); loginError.textContent = "";
+      button.setAttribute("aria-busy", "true"); notificarTemporariamente("", 0, loginError);
       const form = new FormData(event.currentTarget);
       try {
         const result = await request("/api/login", {
@@ -946,10 +1082,10 @@ PAGINA = """<!doctype html>
         loginPassword.type = "password";
         document.querySelector("#toggle-login-password").textContent = "Mostrar";
         document.querySelector("#toggle-login-password").setAttribute("aria-pressed", "false");
-        status.textContent = "";
+        notificarTemporariamente("");
         await abrirPainel();
       } catch (error) {
-        loginError.textContent = error.message;
+        notificarTemporariamente(error.message, 10000, loginError);
         loginPassword.focus();
       } finally {
         button.disabled = false; button.textContent = "Entrar no painel";
@@ -962,7 +1098,7 @@ PAGINA = """<!doctype html>
         await request("/api/logout", { method: "POST", body: "{}" });
         csrf = "";
         await abrirPainel();
-      } catch (error) { status.textContent = error.message; }
+      } catch (error) { notificarTemporariamente(error.message, 10000); }
     });
 
     document.querySelector("#password-form").addEventListener("submit", async (event) => {
@@ -970,7 +1106,7 @@ PAGINA = """<!doctype html>
       const form = new FormData(event.currentTarget);
       const newPassword = form.get("new_password");
       if (newPassword !== form.get("confirm_password")) {
-        status.textContent = "A confirmação não corresponde à nova senha.";
+        notificarTemporariamente("A confirmação não corresponde à nova senha.", 10000);
         return;
       }
       try {
@@ -983,8 +1119,8 @@ PAGINA = """<!doctype html>
         });
         csrf = result.csrf;
         event.currentTarget.reset();
-        status.textContent = "Senha alterada. As outras sessões foram encerradas.";
-      } catch (error) { status.textContent = error.message; }
+        notificarTemporariamente("Senha alterada. As outras sessões foram encerradas.");
+      } catch (error) { notificarTemporariamente(error.message, 10000); }
     });
 
     for (const formId of ["settings-form", "oracle-settings-form"]) {
@@ -996,7 +1132,7 @@ PAGINA = """<!doctype html>
       const saveButton = event.currentTarget.querySelector('button[type="submit"]');
       saveButton.disabled = true;
       saveButton.textContent = "SALVANDO E TESTANDO…";
-      status.textContent = section === "bot" ? "Verificando Telegram…" : "Verificando Oracle…";
+      notificarTemporariamente(section === "bot" ? "Verificando Telegram…" : "Verificando Oracle…", 0);
       const fields = {
         TELEGRAM_ADMIN_ID: "telegram-admin-id",
         TELEGRAM_BOT_TOKEN: "telegram-bot-token",
@@ -1025,12 +1161,13 @@ PAGINA = """<!doctype html>
         });
         for (const field of settingsForm.querySelectorAll('#telegram-bot-token, #oracle-password')) field.value = "";
         for (const field of settingsForm.querySelectorAll('input[type="checkbox"]')) field.checked = false;
+        if (section === "oracle") ocultarDadosOracle();
         renderConnections(result.checks);
         const verificacoes = Object.entries(result.checks)
           .map(([servico, check]) => `${servico}: ${check.message}`)
           .join("\\n");
-        status.textContent = `${result.message}\\n${verificacoes}`;
-      } catch (error) { status.textContent = error.message; }
+        notificarTemporariamente(`${result.message}\\n${verificacoes}`, 10000);
+      } catch (error) { notificarTemporariamente(error.message, 10000); }
       finally {
         saveButton.disabled = false;
         saveButton.textContent = buttonText;
@@ -1197,6 +1334,43 @@ def obter_configuracoes_painel(request: Request):
         if chave != "WEB_SESSION_SECRET"
     })
     return resposta
+
+
+@app.get("/api/message-templates")
+def modelos_mensagem(request: Request):
+    _exigir_admin(request)
+    try:
+        return {'templates': listar_modelos(), 'limite': LIMITE_MODELO}
+    except (RuntimeError, OSError) as erro:
+        raise HTTPException(status_code=503, detail='Não foi possível carregar mensagens.json. Verifique o arquivo ou restaure um backup.') from erro
+
+
+@app.put("/api/message-templates")
+async def atualizar_modelos_mensagem(request: Request):
+    _exigir_admin(request)
+    _exigir_csrf(request)
+    try:
+        dados = await request.json()
+        if not isinstance(dados, dict) or set(dados) != {'templates'}:
+            raise ValueError('Informe os modelos de mensagem.')
+        return {'templates': salvar_modelos(dados['templates']), 'limite': LIMITE_MODELO}
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from erro
+    except (RuntimeError, OSError) as erro:
+        raise HTTPException(status_code=503, detail='Não foi possível salvar mensagens.json. Verifique a pasta de dados.') from erro
+
+
+@app.post("/api/message-templates/preview")
+async def previa_mensagem(request: Request):
+    _exigir_admin(request)
+    _exigir_csrf(request)
+    try:
+        dados = await request.json()
+        if not isinstance(dados, dict) or set(dados) != {'id', 'texto'} or not isinstance(dados['id'], str):
+            raise ValueError('Informe o tipo e o texto da mensagem.')
+        return {'texto': previa_modelo(dados['id'], dados['texto'])}
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from erro
 
 
 @app.get("/api/windows-service")
