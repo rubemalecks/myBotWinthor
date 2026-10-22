@@ -3,7 +3,7 @@ import json
 import unittest
 from types import SimpleNamespace
 
-import bot
+from modulos import bot
 
 
 class LogsConsultasTests(unittest.TestCase):

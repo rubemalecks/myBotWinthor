@@ -1,6 +1,6 @@
 import unittest
 
-from margem_departamento import formatar_relatorio
+from modulos.margem_departamento import formatar_relatorio
 
 
 class RelatorioMargemTests(unittest.TestCase):

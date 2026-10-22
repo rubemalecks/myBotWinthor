@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
-import permissoes
+from modulos import permissoes
 
 
 class PermissoesTests(unittest.TestCase):
@@ -16,7 +16,7 @@ class PermissoesTests(unittest.TestCase):
         self.arquivo_original = permissoes.ARQUIVO_DADOS
         self.legado_original = permissoes.ARQUIVO_LEGADO
         permissoes.ARQUIVO_DADOS = Path(self.tempdir.name) / "dados_bot.json"
-        permissoes.ARQUIVO_LEGADO = Path(self.tempdir.name) / "permissoes.db"
+        permissoes.ARQUIVO_LEGADO = Path(self.tempdir.name) / "modulos.permissoes.db"
         self.admin_env = patch.dict(os.environ, {"TELEGRAM_ADMIN_ID": "999"})
         self.admin_env.start()
         permissoes.inicializar()
@@ -101,6 +101,13 @@ class PermissoesTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             permissoes.atualizar_perfil(999, {"aprovado": False})
         self.assertTrue(permissoes.tem_permissao(999, "ver_custos"))
+
+    def test_preco_programado_exige_permissao_especifica(self):
+        permissoes.registrar_usuario(123)
+        permissoes.atualizar_perfil(123, {'aprovado': True, 'consulta_preco': True})
+        self.assertFalse(permissoes.tem_permissao(123, 'ver_preco_programado'))
+        permissoes.atualizar_perfil(123, {'ver_preco_programado': True})
+        self.assertTrue(permissoes.tem_permissao(123, 'ver_preco_programado'))
 
     def test_margens_produto_e_departamento_sao_independentes(self):
         permissoes.registrar_usuario(123)

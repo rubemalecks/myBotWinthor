@@ -3,12 +3,16 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-import database
+from modulos import database
 
 
 class ConsultaProdutoTests(unittest.TestCase):
+    def test_pasta_base_permanece_na_raiz_do_projeto(self):
+        self.assertEqual(database.BASE_DIR, Path(__file__).resolve().parent.parent)
+        self.assertEqual(Path(database.__file__).resolve().parent.name, 'modulos')
+
     def test_sonda_valida_consulta_mesmo_com_tabela_vazia(self):
-        with patch('database.conectar') as conectar:
+        with patch('modulos.database.conectar') as conectar:
             cursor = conectar.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
             cursor.fetchone.return_value = (1,)
             self.assertTrue(database.testar_conexao_oracle())
@@ -18,7 +22,7 @@ class ConsultaProdutoTests(unittest.TestCase):
             self.assertEqual(params['CODPROD'], 0)
 
     def test_sonda_nao_confunde_login_com_acesso_as_tabelas(self):
-        with patch('database.conectar') as conectar:
+        with patch('modulos.database.conectar') as conectar:
             cursor = conectar.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
             cursor.fetchone.return_value = (1,)
             cursor.execute.side_effect = [None, database.oracledb.DatabaseError(MagicMock(code=942))]
@@ -29,17 +33,17 @@ class ConsultaProdutoTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as pasta:
             raiz = Path(pasta).resolve()
             (raiz / "oracle_client").mkdir()
-            with patch.object(database, "BASE_DIR", raiz), patch.object(database, "_oracle_client_inicializado", False), patch("database.oracledb.init_oracle_client") as iniciar:
+            with patch.object(database, "BASE_DIR", raiz), patch.object(database, "_oracle_client_inicializado", False), patch("modulos.database.oracledb.init_oracle_client") as iniciar:
                 database._inicializar_oracle_client({"ORACLE_CLIENT_DIR": ""})
                 database._inicializar_oracle_client({"ORACLE_CLIENT_DIR": ""})
                 iniciar.assert_called_once_with(lib_dir=str(raiz / "oracle_client"))
 
     def test_caminho_relativo_usa_pasta_da_api(self):
-        with patch.object(database, "_oracle_client_inicializado", False), patch("database.oracledb.init_oracle_client") as iniciar:
+        with patch.object(database, "_oracle_client_inicializado", False), patch("modulos.database.oracledb.init_oracle_client") as iniciar:
             database._inicializar_oracle_client({"ORACLE_CLIENT_DIR": "oracle_client"})
             iniciar.assert_called_once_with(lib_dir=str((database.BASE_DIR / "oracle_client").resolve()))
 
-    @patch("database.executar_consulta", return_value=[])
+    @patch("modulos.database.executar_consulta", return_value=[])
     def test_consulta_por_codauxiliar2(self, executar):
         database.consultar_produto("12345678", ("codauxiliar2",))
 

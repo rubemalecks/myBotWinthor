@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 SERVICE_NAME = "MyBotWinthorBot"
 SERVICE_DISPLAY_NAME = "Bot WinThor"
 SERVICE_DESCRIPTION = "API, painel administrativo e bot Telegram WinThor."

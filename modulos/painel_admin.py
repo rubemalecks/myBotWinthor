@@ -17,8 +17,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from telegram import Bot
 from telegram.error import InvalidToken, NetworkError, TelegramError
 
-from database import ErroAcessoWinthor, testar_conexao_oracle
-from permissoes import (
+from modulos.database import ErroAcessoWinthor, testar_conexao_oracle
+from modulos.permissoes import (
     CHAVES_CONFIGURACAO,
     CHAVES_SECRETAS,
     DIRETORIO_DADOS,
@@ -30,6 +30,7 @@ from permissoes import (
     registrar_usuario,
     gerenciar_perfil_teste,
     listar_perfis_teste,
+    gerenciar_modelo_perfil,
     revogar,
     obter_configuracao,
     obter_ou_criar_configuracao,
@@ -37,9 +38,9 @@ from permissoes import (
     salvar_configuracoes,
     verificar_senha_admin,
 )
-from servico_windows import obter_status_servico, solicitar_acao_servico
+from modulos.servico_windows import obter_status_servico, solicitar_acao_servico
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 logger = logging.getLogger(__name__)
 
@@ -223,6 +224,7 @@ PAGINA = """<!doctype html>
         <button id="tab-settings" type="button" role="tab" aria-selected="true" aria-controls="panel-settings">Bot</button>
         <button id="tab-oracle" type="button" role="tab" aria-selected="false" aria-controls="panel-oracle" tabindex="-1">Servidor Oracle</button>
         <button id="tab-profiles" type="button" role="tab" aria-selected="false" aria-controls="panel-profiles" tabindex="-1">Perfis e permissões</button>
+        <button id="tab-templates" type="button" role="tab" aria-selected="false" aria-controls="panel-templates" tabindex="-1">Modelos de perfil</button>
       </div>
     <button id="logout" class="secondary" type="button">Sair</button>
     </nav>
@@ -319,6 +321,16 @@ PAGINA = """<!doctype html>
       <p class="muted compact-help">Clique em um perfil para editar. Marque todas as permissões ou selecione cada uma e salve.</p>
       <div class="profiles-list"><div id="test-profiles"></div><div id="users"></div></div>
     </div>
+    <div id="panel-templates" role="tabpanel" aria-labelledby="tab-templates" tabindex="0" hidden>
+      <section class="card"><h2>Modelos de perfil</h2>
+        <p class="muted">Salve predefinições e vincule aos usuários. Alterações no modelo atualizam automaticamente as permissões dos usuários vinculados, mantendo bloqueados os usuários sem acesso ao bot.</p>
+        <form id="template-create-form" autocomplete="off">
+          <label for="template-name">Nome do novo perfil</label>
+          <input id="template-name" type="text" maxlength="128" required autocomplete="off" data-1p-ignore="true" data-lpignore="true" data-bwignore="true" data-form-type="other">
+          <button type="submit">Cadastrar modelo</button>
+        </form>
+      </section><div id="profile-templates"></div>
+    </div>
   </main>
   <footer class="brand-footer">
     <small>Desenvolvido por</small>
@@ -378,6 +390,24 @@ PAGINA = """<!doctype html>
     setTheme(savedTheme === "light" ? "light" : "dark");
     themeToggle.addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
     const status = document.querySelector("#status");
+    let notificationTimer;
+    let notificationObserver;
+    function notificarTemporariamente(message, duration = 5000) {
+      window.clearTimeout(notificationTimer);
+      if (notificationObserver) notificationObserver.disconnect();
+      status.textContent = message;
+      // Cancela o desaparecimento se outra operação atualizar a mensagem.
+      const observer = new MutationObserver(() => {
+        window.clearTimeout(notificationTimer);
+        observer.disconnect();
+      });
+      notificationObserver = observer;
+      observer.observe(status, {childList:true, characterData:true, subtree:true});
+      notificationTimer = window.setTimeout(() => {
+        observer.disconnect();
+        if (status.textContent === message) status.textContent = "";
+      }, duration);
+    }
     const login = document.querySelector("#login");
     const dashboard = document.querySelector("#dashboard");
     const usersContainer = document.querySelector("#users");
@@ -385,6 +415,7 @@ PAGINA = """<!doctype html>
     let configuracaoAtual = {};
     const permissions = [
       ["consulta_preco", "Consultar preços"],
+      ["ver_preco_programado", "Ver preço programado"],
       ["buscar_por_foto", "Buscar por foto"],
       ["buscar_codprod", "Buscar por CODPROD"],
       ["buscar_codauxiliar", "Buscar por CODAUXILIAR"],
@@ -393,6 +424,7 @@ PAGINA = """<!doctype html>
       ["ver_margem_departamento", "Ver margem por departamento"],
       ["ver_custos", "Ver custos detalhados"]
     ];
+    let modelosPerfil = [];
 
     async function request(url, options = {}) {
       const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
@@ -446,7 +478,99 @@ PAGINA = """<!doctype html>
       return input;
     }
 
-    function adicionarMarcarTodos(container, checks) {
+    function vincularAcessoPermissoes(approved, checks) {
+      approved.addEventListener("change", () => {
+        if (!approved.checked) {
+          for (const input of Object.values(checks)) input.checked = false;
+          approved.dispatchEvent(new Event("accesschange"));
+        }
+      });
+      for (const input of Object.values(checks)) {
+        input.addEventListener("change", () => {
+          if (input.checked) approved.checked = true;
+        });
+      }
+    }
+
+    function adicionarSeletorModelo(container, approved, checks, vinculoAtual = null) {
+      let vinculo = vinculoAtual;
+      let aplicando = false;
+      const group = document.createElement("div"); group.className = "row";
+      const label = document.createElement("label"); label.textContent = "Predefinição: ";
+      const select = document.createElement("select"); select.setAttribute("aria-label", "Modelo de permissões");
+      select.style.cssText = "background:var(--field);color:var(--text);border:1px solid var(--border);padding:8px;border-radius:8px;max-width:100%";
+      const empty = document.createElement("option"); empty.value = ""; empty.textContent = "Sem vínculo (personalizado)"; select.append(empty);
+      for (const modelo of modelosPerfil) {
+        const option = document.createElement("option"); option.value = modelo.id; option.textContent = modelo.nome; select.append(option);
+      }
+      select.value = vinculo || "";
+      for (const input of Object.values(checks)) input.addEventListener("change", () => {
+        if (!aplicando) {
+          if (vinculo) status.textContent = "Permissões personalizadas: o vínculo será removido ao salvar. Reaplique o modelo para manter o vínculo.";
+          vinculo = null; select.value = "";
+        }
+      });
+      const apply = document.createElement("button"); apply.type = "button"; apply.className = "secondary"; apply.textContent = "Aplicar modelo"; apply.disabled = true;
+      select.addEventListener("change", () => { apply.disabled = false; });
+      apply.addEventListener("click", () => {
+        const modelo = modelosPerfil.find(item => item.id === select.value);
+        if (!modelo) {
+          vinculo = null;
+          status.textContent = "Vínculo removido do formulário. Salve o perfil para manter permissões personalizadas.";
+          return;
+        }
+        aplicando = true;
+        for (const [key, input] of Object.entries(checks)) {
+          input.checked = Boolean(modelo.permissoes[key]);
+          input.dispatchEvent(new Event("change", {bubbles:true}));
+        }
+        if (Object.values(checks).some(input => input.checked)) approved.checked = true;
+        aplicando = false; vinculo = modelo.id;
+        status.textContent = `Modelo ${modelo.nome} vinculado ao formulário. Salve para confirmar e receber atualizações futuras do modelo.`;
+      });
+      label.append(select); group.append(label, apply); container.append(group);
+      return () => vinculo;
+    }
+
+    async function carregarModelosPerfil() {
+      modelosPerfil = await request("/api/profile-templates");
+      const container = document.querySelector("#profile-templates"); container.replaceChildren();
+      for (const modelo of modelosPerfil) {
+        const card = document.createElement("details"); card.className = "card profile-item";
+        const heading = document.createElement("summary"); heading.textContent = modelo.nome;
+        const label = document.createElement("label"); label.textContent = "Nome do modelo";
+        const name = document.createElement("input"); name.type = "text"; name.value = modelo.nome; name.maxLength = 128; name.autocomplete = "off"; label.append(name);
+        const fields = document.createElement("div"); fields.className = "row";
+        const checks = {};
+        for (const [key, text] of permissions) checks[key] = criarCampo(fields, text, modelo.permissoes[key]);
+        card.append(heading, label); adicionarMarcarTodos(card, checks); card.append(fields);
+        const save = document.createElement("button"); save.type = "button"; save.textContent = "Salvar modelo";
+        save.addEventListener("click", async () => {
+          save.disabled = true;
+          try {
+            await request(`/api/profile-templates/${modelo.id}`, {method:"PUT", body:JSON.stringify({nome:name.value, permissoes:Object.fromEntries(Object.entries(checks).map(([key, input]) => [key, input.checked]))})});
+            await carregarModelosPerfil(); status.textContent = "Modelo salvo. Permissões dos usuários vinculados atualizadas automaticamente.";
+          } catch (error) { status.textContent = error.message; } finally { save.disabled = false; }
+        });
+        const remove = document.createElement("button"); remove.type = "button"; remove.className = "danger"; remove.textContent = "Remover modelo";
+        remove.addEventListener("click", async () => {
+          if (!window.confirm(`Remover o modelo ${modelo.nome}? Usuários existentes serão preservados.`)) return;
+          try { await request(`/api/profile-templates/${modelo.id}`, {method:"DELETE"}); await carregarModelosPerfil(); }
+          catch (error) { status.textContent = error.message; }
+        });
+        const actions = document.createElement("div"); actions.className = "row"; actions.append(save, remove); card.append(actions); container.append(card);
+      }
+    }
+    document.querySelector("#tab-templates").addEventListener("click", () => carregarModelosPerfil().catch(error => { status.textContent = error.message; }));
+    document.querySelector("#template-create-form").addEventListener("submit", async event => {
+      event.preventDefault(); const form = event.currentTarget; const button = form.querySelector("button"); button.disabled = true;
+      try {
+        await request("/api/profile-templates", {method:"POST", body:JSON.stringify({nome:document.querySelector("#template-name").value, permissoes:{}})});
+        form.reset(); await carregarModelosPerfil(); status.textContent = "Modelo criado. Abra-o, selecione as permissões e salve.";
+      } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
+    });
+
+    function adicionarMarcarTodos(container, checks, approved = null) {
       const toolbar = document.createElement("div");
       toolbar.className = "permissions-toolbar";
       const all = criarCampo(toolbar, "Marcar todas as permissões", false);
@@ -465,10 +589,12 @@ PAGINA = """<!doctype html>
         sync();
       });
       inputs.forEach(input => input.addEventListener("change", sync));
+      if (approved) approved.addEventListener("accesschange", sync);
       sync(); container.append(toolbar);
     }
 
     async function carregarUsuarios() {
+      await carregarModelosPerfil();
       await carregarPerfisTeste();
       const users = await request("/api/users");
       usersContainer.replaceChildren();
@@ -499,18 +625,24 @@ PAGINA = """<!doctype html>
         statusLine.className = user.aprovado ? "approved" : "pending";
         const fields = document.createElement("div");
         fields.className = "row";
-        const approved = criarCampo(fields, "Permitir acesso ao bot", user.aprovado, user.administrador);
+        const access = document.createElement("div");
+        access.className = "permissions-toolbar";
+        const approved = criarCampo(access, "Permitir acesso ao bot", user.aprovado, user.administrador);
         const checks = {};
         for (const [key, label] of permissions) {
           checks[key] = criarCampo(fields, label, user[key]);
         }
         const editor = document.createElement("div");
-        adicionarMarcarTodos(editor, {aprovado: approved, ...checks});
+        const obterVinculo = adicionarSeletorModelo(editor, approved, checks, user.modelo_perfil_id);
+        vincularAcessoPermissoes(approved, checks);
+        editor.append(access);
+        adicionarMarcarTodos(editor, checks, approved);
         const save = document.createElement("button");
         save.type = "button";
         save.textContent = "Salvar perfil";
         save.addEventListener("click", async () => {
-          const profile = { aprovado: approved.checked };
+          const profile = {modelo_perfil_id: obterVinculo()};
+          if (approved.checked !== Boolean(user.aprovado)) profile.aprovado = approved.checked;
           for (const [key] of permissions) profile[key] = checks[key].checked;
           try {
             await request(`/api/users/${user.telegram_id}`, {
@@ -527,7 +659,7 @@ PAGINA = """<!doctype html>
           remove.disabled = true;
           try {
             await request(`/api/users/${user.telegram_id}`, {method: "DELETE"});
-            await carregarUsuarios(); status.textContent = "Usuário removido.";
+            await carregarUsuarios(); notificarTemporariamente("Usuário removido.");
           } catch (error) { status.textContent = error.message; }
           finally { remove.disabled = false; }
         });
@@ -596,15 +728,22 @@ PAGINA = """<!doctype html>
         const heading = document.createElement("summary");
         heading.textContent = profile.nome + " · Perfil de teste" + (profile.id === data.active ? " · Ativo" : "");
         const fields = document.createElement("div"); fields.className = "row";
-        const checks = {aprovado: criarCampo(fields, "Permitir acesso ao bot", profile.aprovado)};
+        const access = document.createElement("div"); access.className = "permissions-toolbar";
+        const approved = criarCampo(access, "Permitir acesso ao bot", profile.aprovado);
+        const checks = {};
         for (const [key, label] of permissions) checks[key] = criarCampo(fields, label, profile[key]);
         const editor = document.createElement("div");
-        adicionarMarcarTodos(editor, checks);
+        const obterVinculo = adicionarSeletorModelo(editor, approved, checks, profile.modelo_perfil_id);
+        vincularAcessoPermissoes(approved, checks);
+        editor.append(access);
+        adicionarMarcarTodos(editor, checks, approved);
         const save = document.createElement("button"); save.type = "button"; save.textContent = "Salvar permissões";
         save.addEventListener("click", async () => {
           save.disabled = true;
           try {
             const values = Object.fromEntries(Object.entries(checks).map(([key, input]) => [key, input.checked]));
+            values.modelo_perfil_id = obterVinculo();
+            if (approved.checked !== Boolean(profile.aprovado)) values.aprovado = approved.checked;
             await acaoPerfilTeste("salvar", profile.id, values);
             status.textContent = "Permissões do perfil salvas.";
           } catch (error) { status.textContent = error.message; }
@@ -616,7 +755,7 @@ PAGINA = """<!doctype html>
         remove.addEventListener("click", async () => {
           if (!window.confirm(`Remover o perfil ${profile.nome}?`)) return;
           remove.disabled = true;
-          try { await acaoPerfilTeste("remover", profile.id); status.textContent = "Perfil removido."; }
+          try { await acaoPerfilTeste("remover", profile.id); notificarTemporariamente("Perfil removido."); }
           catch (error) { status.textContent = error.message; }
           finally { remove.disabled = false; }
         });
@@ -1254,6 +1393,44 @@ async def criar_usuario(request: Request):
     return registrar_usuario(int(texto), nome.strip() or None)
 
 
+@app.get("/api/profile-templates")
+def modelos_perfil(request: Request):
+    _exigir_admin(request)
+    return gerenciar_modelo_perfil()
+
+
+async def _salvar_modelo(request, acao, modelo_id=None):
+    _exigir_admin(request)
+    _exigir_csrf(request)
+    try:
+        dados = await request.json()
+        if not isinstance(dados, dict):
+            raise ValueError('Requisição inválida.')
+        return gerenciar_modelo_perfil(acao, modelo_id, dados.get('nome'), dados.get('permissoes'))
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from erro
+
+
+@app.post("/api/profile-templates", status_code=201)
+async def criar_modelo_perfil(request: Request):
+    return await _salvar_modelo(request, 'criar')
+
+
+@app.put("/api/profile-templates/{modelo_id}")
+async def salvar_modelo_perfil(modelo_id: str, request: Request):
+    return await _salvar_modelo(request, 'salvar', modelo_id)
+
+
+@app.delete("/api/profile-templates/{modelo_id}")
+def remover_modelo_perfil(modelo_id: str, request: Request):
+    _exigir_admin(request)
+    _exigir_csrf(request)
+    try:
+        return gerenciar_modelo_perfil('remover', modelo_id)
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from erro
+
+
 @app.get("/api/test-profiles")
 def perfis_teste(request: Request):
     _exigir_admin(request)
@@ -1295,10 +1472,10 @@ async def atualizar_usuario(telegram_id: int, request: Request):
         perfil = await request.json()
     except ValueError as erro:
         raise HTTPException(status_code=400, detail="Requisição inválida.") from erro
-    campos = {"aprovado", *PERMISSOES}
+    campos = {"aprovado", "modelo_perfil_id", *PERMISSOES}
     if not isinstance(perfil, dict) or not perfil or not set(perfil).issubset(campos):
         raise HTTPException(status_code=400, detail="Campos de perfil inválidos.")
-    if any(not isinstance(valor, bool) for valor in perfil.values()):
+    if any(not isinstance(valor, bool) for chave, valor in perfil.items() if chave != 'modelo_perfil_id'):
         raise HTTPException(status_code=400, detail="As permissões devem ser booleanas.")
     try:
         return atualizar_perfil(telegram_id, perfil)

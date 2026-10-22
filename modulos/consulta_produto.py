@@ -5,10 +5,10 @@ from pathlib import Path
 import oracledb
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 oracledb.init_oracle_client(
-    lib_dir=str(Path(__file__).resolve().parent / "oracle_client")
+    lib_dir=str(Path(__file__).resolve().parent.parent / "oracle_client")
 )
 
 with oracledb.connect(

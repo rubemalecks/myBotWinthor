@@ -4,7 +4,7 @@ Cada produto contribui com UMA unidade por filial e região.
 Não é lucro realizado, nem leva em conta quantidade em estoque/vendida.
 """
 from decimal import Decimal
-from database import executar_consulta
+from modulos.database import executar_consulta
 
 
 def listar_departamentos(termo=None):

@@ -5,13 +5,13 @@ from threading import Lock
 
 import oracledb
 from dotenv import load_dotenv
-from permissoes import obter_configuracao
+from modulos.permissoes import obter_configuracao
 
 # ==========================================
 # CONFIGURAÇÕES ORACLE
 # ==========================================
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env")
 

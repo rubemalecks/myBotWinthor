@@ -15,15 +15,15 @@ os.environ["TELEGRAM_ADMIN_ID"] = "999"
 
 from fastapi.testclient import TestClient
 
-import permissoes
+from modulos import permissoes
 
 _DADOS_INICIAIS_TESTES = tempfile.TemporaryDirectory()
 permissoes.ARQUIVO_DADOS = Path(_DADOS_INICIAIS_TESTES.name) / "bootstrap.json"
 permissoes.ARQUIVO_LEGADO = Path(_DADOS_INICIAIS_TESTES.name) / "missing.db"
 unittest.addModuleCleanup(_DADOS_INICIAIS_TESTES.cleanup)
 
-import painel_admin
-from painel_admin import app
+from modulos import painel_admin
+from modulos.painel_admin import app
 
 
 class PainelAdminTests(unittest.TestCase):
@@ -32,7 +32,7 @@ class PainelAdminTests(unittest.TestCase):
         self.arquivo_original = permissoes.ARQUIVO_DADOS
         self.legado_original = permissoes.ARQUIVO_LEGADO
         permissoes.ARQUIVO_DADOS = Path(self.tempdir.name) / "dados_bot.json"
-        permissoes.ARQUIVO_LEGADO = Path(self.tempdir.name) / "permissoes.db"
+        permissoes.ARQUIVO_LEGADO = Path(self.tempdir.name) / "modulos.permissoes.db"
         permissoes.inicializar()
         permissoes.registrar_usuario(123, "Pessoa", "pessoa")
         painel_admin._tentativas_login.clear()
@@ -75,11 +75,80 @@ class PainelAdminTests(unittest.TestCase):
         resposta = cliente.get("/api/users")
         self.assertEqual(resposta.status_code, 401)
 
+    def test_modelos_perfil_crud_e_permissoes(self):
+        headers = {'X-CSRF-Token': self.csrf}
+        self.assertEqual(TestClient(app).get('/api/profile-templates').status_code, 401)
+        self.assertEqual(self.client.post('/api/profile-templates', json={}).status_code, 403)
+        iniciais = self.client.get('/api/profile-templates').json()
+        self.assertEqual({m['nome'] for m in iniciais}, {'Funcionário', 'Cliente'})
+        self.assertTrue(all(not m['permissoes']['ver_custos'] for m in iniciais))
+        resposta = self.client.post('/api/profile-templates', headers=headers,
+            json={'nome': 'Vendedor', 'permissoes': {'consulta_preco': True}})
+        self.assertEqual(resposta.status_code, 201)
+        modelo = next(m for m in resposta.json() if m['nome'] == 'Vendedor')
+        self.assertFalse(modelo['permissoes']['ver_preco_programado'])
+        resposta = self.client.put('/api/profile-templates/' + modelo['id'], headers=headers,
+            json={'nome': 'Vendedor', 'permissoes': {'buscar_codprod': True}})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertFalse(permissoes.obter_perfil(123)['aprovado'])
+        resposta = self.client.delete('/api/profile-templates/' + modelo['id'], headers=headers)
+        self.assertEqual(resposta.status_code, 200)
+        self.assertFalse(any(m['id'] == modelo['id'] for m in resposta.json()))
+
+    def test_modelos_invalidos_nao_sao_salvos(self):
+        for dados in ({'nome': '', 'permissoes': {}},
+                      {'nome': 'Outro', 'permissoes': {'ver_custos': 'sim'}},
+                      {'nome': 'Outro', 'permissoes': {'aprovado': True}}):
+            resposta = self.client.post('/api/profile-templates', headers={'X-CSRF-Token': self.csrf}, json=dados)
+            self.assertEqual(resposta.status_code, 400)
+
+    def test_modelo_vinculado_propaga_e_respeita_bloqueio(self):
+        headers = {'X-CSRF-Token': self.csrf}
+        self.client.get('/api/profile-templates')
+        resposta = self.client.put('/api/users/123', headers=headers,
+            json={'modelo_perfil_id': 'cliente', 'aprovado': True})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertTrue(resposta.json()['consulta_preco'])
+        self.client.put('/api/profile-templates/cliente', headers=headers,
+            json={'nome': 'Cliente', 'permissoes': {'ver_preco_programado': True}})
+        self.assertTrue(permissoes.tem_permissao(123, 'ver_preco_programado'))
+        self.assertFalse(permissoes.tem_permissao(123, 'consulta_preco'))
+        self.client.put('/api/users/123', headers=headers, json={'aprovado': False})
+        self.assertTrue(all(not permissoes.obter_perfil(123)[chave] for chave in permissoes.PERMISSOES))
+        self.client.put('/api/profile-templates/cliente', headers=headers,
+            json={'nome': 'Cliente', 'permissoes': {chave: True for chave in permissoes.PERMISSOES}})
+        perfil = permissoes.obter_perfil(123)
+        self.assertFalse(perfil['aprovado'])
+        self.assertTrue(all(not perfil[chave] for chave in permissoes.PERMISSOES))
+
+    def test_remover_vinculo_preserva_permissoes_e_modelo_invalido_e_rejeitado(self):
+        headers = {'X-CSRF-Token': self.csrf}
+        self.client.get('/api/profile-templates')
+        self.client.put('/api/users/123', headers=headers, json={'modelo_perfil_id': 'cliente', 'aprovado': True})
+        self.client.put('/api/users/123', headers=headers, json={'modelo_perfil_id': None})
+        self.client.put('/api/profile-templates/cliente', headers=headers,
+            json={'nome': 'Cliente', 'permissoes': {}})
+        self.assertTrue(permissoes.tem_permissao(123, 'consulta_preco'))
+        resposta = self.client.put('/api/users/123', headers=headers, json={'modelo_perfil_id': []})
+        self.assertEqual(resposta.status_code, 400)
+
+    def test_alterar_permissoes_preserva_aprovacao_mesmo_apos_novo_acesso(self):
+        permissoes.atualizar_perfil(123, {'aprovado': True, 'consulta_preco': True})
+        headers = {'X-CSRF-Token': self.csrf}
+        for valores in ({'consulta_preco': False, 'ver_custos': False},
+                        {'consulta_preco': True, 'buscar_codprod': True}):
+            resposta = self.client.put('/api/users/123', headers=headers, json=valores)
+            self.assertEqual(resposta.status_code, 200)
+            self.assertTrue(resposta.json()['aprovado'])
+            self.assertTrue(permissoes.registrar_usuario(123)['aprovado'])
+        resposta = self.client.put('/api/users/123', headers=headers, json={'aprovado': False})
+        self.assertFalse(resposta.json()['aprovado'])
+
     def test_indicadores_de_conexao_exigem_login(self):
         self.assertEqual(TestClient(app).get('/api/connections').status_code, 401)
 
     def test_indicadores_distinguem_telegram_ok_e_oracle_sem_acesso(self):
-        with patch('painel_admin._verificar_telegram', new_callable=AsyncMock, return_value={'status': 'connected', 'message': 'conectado'}) as telegram, patch('painel_admin._verificar_oracle', new_callable=AsyncMock, return_value={'status': 'insufficient_access', 'message': 'Sem acesso às tabelas'}) as oracle:
+        with patch('modulos.painel_admin._verificar_telegram', new_callable=AsyncMock, return_value={'status': 'connected', 'message': 'conectado'}) as telegram, patch('modulos.painel_admin._verificar_oracle', new_callable=AsyncMock, return_value={'status': 'insufficient_access', 'message': 'Sem acesso às tabelas'}) as oracle:
             resposta = self.client.get('/api/connections')
         self.assertEqual(resposta.status_code, 200)
         self.assertEqual(resposta.headers['cache-control'], 'no-store')
@@ -90,7 +159,7 @@ class PainelAdminTests(unittest.TestCase):
 
     def test_salvar_secao_bot_nao_modifica_nem_testa_oracle(self):
         permissoes.salvar_configuracoes({'ORACLE_PASSWORD': 'preservada'})
-        with patch('painel_admin._verificar_telegram', new_callable=AsyncMock, return_value={'status': 'connected'}) as telegram, patch('painel_admin._verificar_oracle', new_callable=AsyncMock) as oracle:
+        with patch('modulos.painel_admin._verificar_telegram', new_callable=AsyncMock, return_value={'status': 'connected'}) as telegram, patch('modulos.painel_admin._verificar_oracle', new_callable=AsyncMock) as oracle:
             resposta = self.client.put('/api/settings', headers={'X-CSRF-Token': self.csrf},
                                       json={'section': 'bot', 'settings': {'TELEGRAM_ADMIN_ID': '999'}})
         self.assertEqual(resposta.status_code, 200)
@@ -101,7 +170,7 @@ class PainelAdminTests(unittest.TestCase):
 
     def test_salvar_secao_oracle_nao_modifica_nem_testa_bot(self):
         permissoes.salvar_configuracoes({'TELEGRAM_BOT_TOKEN': 'preservado'})
-        with patch('painel_admin._verificar_oracle', new_callable=AsyncMock, return_value={'status': 'connected'}) as oracle, patch('painel_admin._verificar_telegram', new_callable=AsyncMock) as telegram:
+        with patch('modulos.painel_admin._verificar_oracle', new_callable=AsyncMock, return_value={'status': 'connected'}) as oracle, patch('modulos.painel_admin._verificar_telegram', new_callable=AsyncMock) as telegram:
             resposta = self.client.put('/api/settings', headers={'X-CSRF-Token': self.csrf},
                                       json={'section': 'oracle', 'settings': {'ORACLE_HOST': '192.0.2.1'}})
         self.assertEqual(resposta.status_code, 200)
@@ -288,12 +357,12 @@ class PainelAdminTests(unittest.TestCase):
     def test_configuracoes_sao_salvas_em_json_e_segredos_nao_sao_retornados(self):
         with (
             patch(
-                "painel_admin._verificar_telegram",
+                "modulos.painel_admin._verificar_telegram",
                 new_callable=AsyncMock,
                 return_value={"status": "connected", "message": "conectado"},
             ),
             patch(
-                "painel_admin._verificar_oracle",
+                "modulos.painel_admin._verificar_oracle",
                 new_callable=AsyncMock,
                 return_value={"status": "unavailable", "message": "sem acesso"},
             ),
@@ -344,12 +413,12 @@ class PainelAdminTests(unittest.TestCase):
     def test_falhas_nos_testes_de_conexao_nao_impedem_salvar_configuracoes(self):
         with (
             patch(
-                "painel_admin._verificar_telegram",
+                "modulos.painel_admin._verificar_telegram",
                 new_callable=AsyncMock,
                 return_value={"status": "unavailable", "message": "sem resposta"},
             ),
             patch(
-                "painel_admin._verificar_oracle",
+                "modulos.painel_admin._verificar_oracle",
                 new_callable=AsyncMock,
                 return_value={"status": "unavailable", "message": "sem acesso"},
             ),
@@ -371,7 +440,7 @@ class PainelAdminTests(unittest.TestCase):
     def test_teste_telegram_valida_token_com_get_me(self):
         bot = AsyncMock()
         bot.__aenter__.return_value = bot
-        with patch("painel_admin.Bot", return_value=bot):
+        with patch("modulos.painel_admin.Bot", return_value=bot):
             resultado = asyncio.run(
                 painel_admin._verificar_telegram(
                     {"TELEGRAM_BOT_TOKEN": "token-nao-exibido"}
@@ -385,7 +454,7 @@ class PainelAdminTests(unittest.TestCase):
         bot = AsyncMock()
         bot.__aenter__.return_value = bot
         bot.get_me.side_effect = InvalidToken("token inválido")
-        with patch("painel_admin.Bot", return_value=bot):
+        with patch("modulos.painel_admin.Bot", return_value=bot):
             resultado = asyncio.run(
                 painel_admin._verificar_telegram(
                     {"TELEGRAM_BOT_TOKEN": "token-nao-exibido"}
@@ -402,7 +471,7 @@ class PainelAdminTests(unittest.TestCase):
             "ORACLE_USER": "bot",
             "ORACLE_PASSWORD": "senha-ficticia",
         }
-        with patch("painel_admin.testar_conexao_oracle", return_value=True) as probe:
+        with patch("modulos.painel_admin.testar_conexao_oracle", return_value=True) as probe:
             resultado = asyncio.run(
                 painel_admin._verificar_oracle(configuracao)
             )
@@ -430,7 +499,7 @@ class PainelAdminTests(unittest.TestCase):
             "state": "stopped",
             "automatic": True,
         }
-        with patch("painel_admin.obter_status_servico", return_value=status):
+        with patch("modulos.painel_admin.obter_status_servico", return_value=status):
             resposta = self.client.get("/api/windows-service")
         self.assertEqual(resposta.status_code, 200)
         self.assertEqual(resposta.json(), status)
@@ -441,7 +510,7 @@ class PainelAdminTests(unittest.TestCase):
 
     def test_acao_do_servico_windows_e_validada_e_encaminhada(self):
         with patch(
-            "painel_admin.solicitar_acao_servico",
+            "modulos.painel_admin.solicitar_acao_servico",
             return_value={"message": "Solicitação encaminhada."},
         ) as solicitar:
             resposta = self.client.post(
@@ -466,7 +535,7 @@ class PainelAdminTests(unittest.TestCase):
             "WEB_ADMIN_PORT": "8765",
             "WEB_ADMIN_URL": "",
         }):
-            with patch("painel_admin.socket.socket") as socket_mock:
+            with patch("modulos.painel_admin.socket.socket") as socket_mock:
                 socket_mock.return_value.__enter__.return_value.getsockname.return_value = (
                     "10.20.30.40", 0
                 )
