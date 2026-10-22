@@ -1,0 +1,68 @@
+
+# =====================================
+# CREDENCIAIS E CONFIGURAÇÕES SENSÍVEIS
+# =====================================
+.env
+.env.*
+!.env.example
+.env copy*
+.env - Copy*
+
+# =====================================
+# AMBIENTES VIRTUAIS
+# =====================================
+.venv/
+venv/
+env/
+
+# =====================================
+# CACHE PYTHON
+# =====================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# =====================================
+# CONFIGURAÇÕES DO EDITOR
+# =====================================
+.vscode/
+
+# =====================================
+# LOGS
+# =====================================
+*.log
+
+# =====================================
+# CLIENTE ORACLE
+# =====================================
+oracle_client/
+
+# =====================================
+# BANCOS E DADOS LOCAIS
+# =====================================
+permissoes.db*
+impressoes.db*
+*.db-journal
+*.db-wal
+*.db-shm
+dados_bot.json
+dados_bot.json.*
+config_bot.json
+config_bot.json.*
+config_oracle.json
+config_oracle.json.*
+*-dados/
+dados/
+.dados_bot.json.*.tmp
+
+# =====================================
+# ARQUIVOS TEMPORÁRIOS
+# =====================================
+*.tmp
+*.bak
+etiqueta_teste*
+
+# Backups locais: podem conter credenciais e cadastros
+backup/
+backups/
