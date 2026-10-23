@@ -24,6 +24,9 @@ from modulos.leitor_barras import ler_codigo_barras
 from modulos.calculos import ganho_sobre_custo
 from modulos.formulas import explicar_formula
 from modulos.mensagens import renderizar_mensagem
+from modulos.campos_produto import valores_campos_produto
+from modulos.regras_margem import obter_regras
+from modulos.database import consultar_calculos_formulas_produto
 from modulos.rede import enderecos_painel
 from modulos.margem_departamento import (
     listar_departamentos, obter_departamento, listar_filiais_departamento,
@@ -249,12 +252,23 @@ async def comando_formula(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.effective_message.reply_text('Produto não encontrado ou sem preço nas tabelas permitidas.')
                 return
             custos = await consultar_com_log(update, 'formula_custos', consultar_custos, produtos[0]['codprod'], escopo, codprod=termo)
-            texto = renderizar_mensagem('formula_produto', descricao=produtos[0]['descricao'], codprod=produtos[0]['codprod'])
+            permissoes_campos = {'consulta_preco', 'ver_custos'} if exibir_custo else {'consulta_preco'}
+            texto = renderizar_mensagem('formula_produto', descricao=produtos[0]['descricao'], codprod=produtos[0]['codprod'],
+                **valores_campos_produto(produtos[0], permissoes_campos))
             texto += 'Preço: PCTABPR.PVENDA. Custo de entrada: PCEST.CUSTOULTENT (valor registrado no WinThor).\n'
-            for custo in custos:
-                for produto in produtos:
-                    texto += f'\n🏢 Filial {custo["codfilial"]} · 📋 {produto["numregiao"]} — {produto["nome_tabela"]}\n'
-                    texto += explicar_formula(produto['pvenda'], custo['custoultent'], exibir_custo)
+            regras = await asyncio.to_thread(obter_regras, True)
+            if regras:
+                calculos = await consultar_com_log(update, 'formula_personalizada_produto', consultar_calculos_formulas_produto,
+                    produtos[0]['codprod'], escopo, regras, codprod=produtos[0]['codprod'])
+                for linha in calculos:
+                    texto += f'\n🏢 Filial {linha["codfilial"]} · 📋 {linha["numregiao"]} — {linha["nome_tabela"]}\n'
+                    texto += explicar_formula(linha['preco'], linha['custo'], exibir_custo,
+                        resultado=linha['atual'], parametros=linha['parametros'])
+            else:
+                for custo in custos:
+                    for produto in produtos:
+                        texto += f'\n🏢 Filial {custo["codfilial"]} · 📋 {produto["numregiao"]} — {produto["nome_tabela"]}\n'
+                        texto += explicar_formula(produto['pvenda'], custo['custoultent'], exibir_custo)
             if not custos:
                 texto += '\nNenhum custo disponível nas filiais permitidas.'
         else:
@@ -278,7 +292,7 @@ async def comando_formula(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     depto['codepto'], filial['codfilial'], None, escopo, departamento=depto['codepto'], filial=filial['codfilial'])
                 for linha in linhas:
                     texto += f'\n🏢 Filial {filial["codfilial"]} · 📋 {linha["numregiao"]} — {linha["nome_tabela"]}\n'
-                    texto += explicar_formula(linha['total_precos'], linha['total_custos'], exibir_custo, agregado=True)
+                    texto += explicar_formula(linha['total_precos'], linha['total_custos'], exibir_custo, agregado=True, departamento=linha)
             if not filiais:
                 texto += '\nNenhuma filial autorizada disponível para o departamento.'
         if not exibir_custo:
@@ -395,9 +409,10 @@ async def comando_usuarios(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text('⚠️ Erro ao listar usuários.')
 
 
-def montar_mensagem_precos(produtos, incluir_programado=False):
+def montar_mensagem_precos(produtos, incluir_programado=False, permissoes_campos=('consulta_preco',)):
     primeiro = produtos[0]
-    mensagem = renderizar_mensagem('produto', descricao=primeiro['descricao'], codprod=primeiro['codprod'])
+    mensagem = renderizar_mensagem('produto', descricao=primeiro['descricao'], codprod=primeiro['codprod'],
+        **valores_campos_produto(primeiro, permissoes_campos))
     for i, item in enumerate(produtos):
         if i:
             mensagem += '\n━━━━━━━━━━━━━━━━━━━━\n\n'
@@ -432,7 +447,21 @@ def montar_mensagem_custos(custos, produtos):
     return mensagem
 
 
-def montar_mensagem_margens(custos, produtos):
+def montar_mensagem_margens(custos, produtos, calculos=None):
+    if calculos is not None:
+        mensagem = renderizar_mensagem('lucro_titulo')
+        if not calculos:
+            return mensagem + '\nSem dados disponíveis nas filiais e tabelas permitidas.'
+        varias_filiais = len({str(linha['codfilial']) for linha in calculos}) > 1
+        for linha in calculos:
+            if varias_filiais:
+                mensagem += f'\n🏢 FILIAL {linha["codfilial"]}\n'
+            resultado = linha['atual']
+            margem = f'{Decimal(str(resultado["percentual"])):.2f}'.replace('.', ',') + '%' if resultado['percentual'] is not None else 'Indisponível'
+            mensagem += renderizar_mensagem('lucro_produto', tabela=linha['nome_tabela'], lucro=margem, filial=linha['codfilial'])
+            if resultado['personalizada']:
+                mensagem += f'🧮 Fórmula: {resultado["nome"]}\n'
+        return mensagem
     if not custos:
         return renderizar_mensagem('lucro_indisponivel')
     mensagem = renderizar_mensagem('lucro_titulo')
@@ -564,10 +593,11 @@ async def processar_codigo(update: Update, codigo: str, context=None, origem='ma
             selecoes['regiao'] = opcoes[0][0]
             escopo['tabelas_permitidas'] = [selecoes['regiao']]
         ver_programado = await asyncio.to_thread(tem_permissao, user_id, 'ver_preco_programado')
-        mensagem = montar_mensagem_precos(produtos, incluir_programado=ver_programado)
+        ver_custos = await asyncio.to_thread(pode_ver_custo, user_id)
+        permissoes_campos = {'consulta_preco', 'ver_custos'} if ver_custos else {'consulta_preco'}
+        mensagem = montar_mensagem_precos(produtos, incluir_programado=ver_programado, permissoes_campos=permissoes_campos)
         if 'filial' in selecoes:
             mensagem += renderizar_mensagem('filial', filial=selecoes['filial'])
-        ver_custos = await asyncio.to_thread(pode_ver_custo, user_id)
         ver_margem = await asyncio.to_thread(pode_ver_margem_produto, user_id)
         if ver_custos or ver_margem:
             try:
@@ -577,7 +607,10 @@ async def processar_codigo(update: Update, codigo: str, context=None, origem='ma
                 if ver_custos:
                     mensagem += montar_mensagem_custos(custos, produtos)
                 if ver_margem:
-                    mensagem += montar_mensagem_margens(custos, produtos)
+                    regras = await asyncio.to_thread(obter_regras, True)
+                    calculos = await consultar_com_log(update, 'lucro_personalizado_produto', consultar_calculos_formulas_produto,
+                        produtos[0]['codprod'], escopo, regras, codprod=produtos[0]['codprod']) if regras else None
+                    mensagem += montar_mensagem_margens(custos, produtos, calculos)
             except Exception:
                 logger.exception('Erro na consulta restrita de custos')
                 mensagem += '\n🔐 INFORMAÇÕES DO PERFIL\n\n⚠️ Dados de custo/margem indisponíveis no momento.'

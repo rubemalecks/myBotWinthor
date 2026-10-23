@@ -115,7 +115,10 @@ def executar_consulta(sql, parametros):
 # CONSULTA DE PREÇOS
 # ==========================================
 
-def _montar_consulta_produto(codigo, campos=None, escopo=None):
+def _montar_consulta_produto(codigo, campos=None, escopo=None, campos_retorno=None):
+    from modulos.campos_produto import obter_campos_produto, validar_campos
+    campos_retorno = obter_campos_produto() if campos_retorno is None else validar_campos(campos_retorno)
+    adicionais = ''.join(f', P.{campo["coluna"]} AS EXTRA_{i}' for i, campo in enumerate(campos_retorno))
     campos_validos = {
         "codprod": "P.CODPROD",
         "codauxiliar": "P.CODAUXILIAR",
@@ -135,7 +138,7 @@ def _montar_consulta_produto(codigo, campos=None, escopo=None):
             R.NUMREGIAO,
             R.REGIAO AS NOME_TABELA,
             T.PTABELA,
-            T.PVENDA
+            T.PVENDA{adicionais}
 
         FROM PCPRODUT P
 
@@ -151,7 +154,7 @@ def _montar_consulta_produto(codigo, campos=None, escopo=None):
         AND R.STATUS = 'A'
 
         ORDER BY R.NUMREGIAO
-    """.format(condicoes=condicoes)
+    """.format(condicoes=condicoes, adicionais=adicionais)
 
     parametros = {campo.upper(): int(codigo) for campo in campos}
     sql = sql.replace("ORDER BY R.NUMREGIAO", "AND T.PVENDA > 0 " + filtros_escopo(escopo, parametros, regiao="T.NUMREGIAO") + " ORDER BY R.NUMREGIAO")
@@ -159,8 +162,116 @@ def _montar_consulta_produto(codigo, campos=None, escopo=None):
 
 
 def consultar_produto(codigo, campos=None, escopo=None):
-    sql, parametros = _montar_consulta_produto(codigo, campos, escopo)
-    return executar_consulta(sql, parametros)
+    from modulos.campos_produto import obter_campos_produto
+    campos_retorno = obter_campos_produto()
+    sql, parametros = _montar_consulta_produto(codigo, campos, escopo, campos_retorno)
+    produtos = executar_consulta(sql, parametros)
+    if campos_retorno:
+        for produto in produtos:
+            produto['campos_personalizados'] = {
+                campo['coluna'].lower(): {'valor': produto.pop(f'extra_{i}', None), 'permissao': campo['permissao']}
+                for i, campo in enumerate(campos_retorno)
+            }
+    return produtos
+
+
+def consultar_produto_previa(codprod, campos=None):
+    """Dados de identificação para prévia administrativa, inclusive sem preço."""
+    from modulos.campos_produto import obter_campos_produto, validar_campos
+    campos = obter_campos_produto(estrito=True) if campos is None else validar_campos(campos)
+    extras = ''.join(f', P.{campo["coluna"]} AS EXTRA_{i}' for i, campo in enumerate(campos))
+    linhas = executar_consulta(f'''SELECT P.CODPROD, P.DESCRICAO{extras}
+        FROM PCPRODUT P WHERE P.CODPROD = :CODPROD
+        AND P.DTEXCLUSAO IS NULL AND ROWNUM = 1''', {'CODPROD': int(codprod)})
+    if not linhas:
+        return None
+    produto = linhas[0]
+    produto['campos_personalizados'] = {campo['coluna'].lower():
+        {'valor': produto.pop(f'extra_{i}', None), 'permissao': campo['permissao']}
+        for i, campo in enumerate(campos)}
+    return produto
+
+
+def listar_colunas_produto():
+    """Inspeciona a tabela/sinônimo acessível sem recuperar produtos."""
+    from modulos.campos_produto import coluna_valida, permissao_padrao
+    tipos = {'DB_TYPE_VARCHAR', 'DB_TYPE_NVARCHAR', 'DB_TYPE_CHAR', 'DB_TYPE_NCHAR',
+             'DB_TYPE_NUMBER', 'DB_TYPE_DATE', 'DB_TYPE_TIMESTAMP', 'DB_TYPE_TIMESTAMP_TZ',
+             'DB_TYPE_TIMESTAMP_LTZ', 'DB_TYPE_BINARY_DOUBLE', 'DB_TYPE_BINARY_FLOAT'}
+    with conectar(tcp_connect_timeout=5) as conexao:
+        conexao.call_timeout = 5000
+        with conexao.cursor() as cursor:
+            cursor.execute('SELECT * FROM PCPRODUT WHERE 1=0')
+            colunas = []
+            for descricao in cursor.description:
+                coluna = descricao[0]
+                tipo = getattr(descricao[1], 'name', '')
+                if coluna_valida(coluna) and tipo in tipos:
+                    colunas.append({'coluna': coluna, 'variavel': coluna.lower(),
+                                    'tipo': tipo.removeprefix('DB_TYPE_'), 'permissao_padrao': permissao_padrao(coluna)})
+            return sorted(colunas, key=lambda item: item['coluna'])
+
+
+def listar_catalogo_formulas():
+    from modulos.regras_margem import TABELAS
+    numericos = {'DB_TYPE_NUMBER', 'DB_TYPE_BINARY_DOUBLE', 'DB_TYPE_BINARY_FLOAT'}
+    simples = numericos | {'DB_TYPE_VARCHAR', 'DB_TYPE_NVARCHAR', 'DB_TYPE_CHAR', 'DB_TYPE_NCHAR'}
+    import re
+    campos = []
+    with conectar(tcp_connect_timeout=5) as conexao:
+        conexao.call_timeout = 5000
+        with conexao.cursor() as cursor:
+            for tabela in TABELAS:
+                cursor.execute(f'SELECT * FROM {tabela} WHERE 1=0')
+                for descricao in cursor.description:
+                    coluna = descricao[0]
+                    tipo = getattr(descricao[1], 'name', '')
+                    if re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', coluna) and tipo in simples:
+                        campos.append({'campo': f'{tabela}.{coluna}', 'numerico': tipo in numericos,
+                                       'tipo': tipo.removeprefix('DB_TYPE_')})
+    return campos
+
+
+def consultar_calculos_formulas_produto(codprod, escopo=None, regras=None, rascunho=None):
+    from modulos.regras_margem import CompiladorSQL, obter_regras, expressao_regra, TABELAS
+    regras = obter_regras(ativas=True) if regras is None else regras
+    compilador = CompiladorSQL()
+    atual = compilador.regras(regras)
+    selecoes = [f'{sql} AS ATUAL_{chave}' for chave, sql in atual.items()]
+    if rascunho is not None:
+        simulacao = compilador.ajustes(rascunho)
+        selecoes.extend(f'{sql} AS SIM_{chave}' for chave, sql in simulacao.items())
+        selecoes.append(f'CASE WHEN {compilador.condicao(rascunho)} THEN 1 ELSE 0 END AS SIM_APLICA')
+    campos = sorted({ajuste['campo'] for regra in [*regras, *([rascunho] if rascunho else [])]
+                     for ajuste in regra['ajustes'] if ajuste['tipo'].startswith('campo')})
+    for i, campo in enumerate(campos):
+        tabela, coluna = campo.split('.')
+        selecoes.append(f'{TABELAS[tabela]}.{coluna} AS VALOR_{i}')
+    parametros = {**compilador.parametros, 'FM_CODPROD': int(codprod)}
+    sql = f'''SELECT P.CODPROD, P.DESCRICAO, E.CODFILIAL, T.NUMREGIAO,
+                     R.REGIAO AS NOME_TABELA, T.PVENDA AS PRECO, E.CUSTOULTENT AS CUSTO,
+                     {', '.join(selecoes)}
+              FROM PCPRODUT P
+              JOIN PCTABPR T ON T.CODPROD = P.CODPROD
+              JOIN PCREGIAO R ON R.NUMREGIAO = T.NUMREGIAO
+              JOIN PCEST E ON E.CODPROD = P.CODPROD
+              WHERE P.CODPROD = :FM_CODPROD AND P.DTEXCLUSAO IS NULL
+                AND R.STATUS = 'A' AND T.PVENDA > 0'''
+    sql += filtros_escopo(escopo, parametros, filial='E.CODFILIAL', regiao='T.NUMREGIAO')
+    linhas = executar_consulta(sql + ' ORDER BY E.CODFILIAL, T.NUMREGIAO', parametros)
+    por_id = {regra['id']: regra for regra in regras}
+    for linha in linhas:
+        regra = por_id.get(linha.pop('atual_id'))
+        linha['atual'] = {chave: linha.pop('atual_' + chave) for chave in ('preco', 'custo', 'percentual', 'base')}
+        linha['atual'].update({'nome': regra['nome'] if regra else 'Padrão',
+                               'personalizada': regra is not None, 'expressao': expressao_regra(regra)})
+        linha['parametros'] = {campo: linha.pop(f'valor_{i}') for i, campo in enumerate(campos)}
+        if rascunho is not None:
+            linha['simulacao'] = {chave: linha.pop('sim_' + chave) for chave in ('preco', 'custo', 'percentual', 'base')}
+            linha['simulacao'].update({'nome': rascunho['nome'], 'expressao': expressao_regra(rascunho),
+                                      'aplicavel': bool(linha.pop('sim_aplica')),
+                                      'escopo_definido': bool(rascunho['todos_produtos'] or rascunho['produtos'] or rascunho['where'])})
+    return linhas
 
 
 # ==========================================

@@ -1,6 +1,7 @@
 """Regressão das consultas com produtos ativos e excluídos no mesmo cadastro."""
 import sqlite3
 import unittest
+from decimal import Decimal
 from unittest.mock import patch
 
 from modulos import database, margem_departamento
@@ -44,8 +45,22 @@ class ProdutosExcluidosTests(unittest.TestCase):
         # Apenas a limitação Oracle ROWNUM é adaptada; WHEREs, JOINs e agregações
         # são executados contra dados de teste, sem conexão com o Oracle real.
         sql = sql.replace('WHERE ROWNUM <= 11', 'LIMIT 11').replace('AND ROWNUM = 1', 'LIMIT 1')
+        parametros = {k: float(v) if isinstance(v, Decimal) else v for k, v in parametros.items()}
         return [{chave.lower(): linha[chave] for chave in linha.keys()}
                 for linha in self.conexao.execute(sql, parametros).fetchall()]
+
+    def test_regras_ativas_calculam_produto_e_departamento_sem_excluidos(self):
+        from modulos.regras_margem import normalizar_regra
+        regra = {'id':'a'*24, **normalizar_regra({'nome':'Frete','ativa':True,'produtos':[6],
+            'ajustes':[{'alvo':'custo','operacao':'+','tipo':'valor','valor':'1'}]})}
+        linhas = database.consultar_calculos_formulas_produto(6, regras=[regra], rascunho=regra)
+        self.assertAlmostEqual(linhas[0]['atual']['percentual'], 25)
+        self.assertTrue(linhas[0]['simulacao']['aplicavel'])
+        self.assertEqual(database.consultar_calculos_formulas_produto(7, regras=[regra]), [])
+        with patch('modulos.regras_margem.obter_regras', return_value=[regra]):
+            departamento = margem_departamento.calcular_margens_departamento(10, '1')
+        self.assertEqual(departamento[0]['percentual_formula'], Decimal(25))
+        self.assertEqual(departamento[0]['total_produtos'], 1)
 
     def test_busca_por_todos_os_codigos_omite_excluidos_e_preserva_ativos(self):
         for codigo, campos in [('6', None), ('6', ('codprod',)), ('6001', ('codauxiliar',)),
@@ -59,6 +74,13 @@ class ProdutosExcluidosTests(unittest.TestCase):
     def test_busca_por_nome_nao_apresenta_excluidos(self):
         self.assertEqual([item['codprod'] for item in database.pesquisar_produtos('PRODUTO')], [6])
         self.assertEqual(database.pesquisar_produtos('EXCLUIDO'), [])
+
+    def test_previa_real_le_colunas_sem_exigir_preco_e_omite_excluidos(self):
+        with patch('modulos.campos_produto.obter_campos_produto', return_value=[{'coluna':'CODAUXILIAR','permissao':'consulta_preco'}]):
+            self.conexao.execute('DELETE FROM PCTABPR WHERE CODPROD=6')
+            produto = database.consultar_produto_previa(6)
+            self.assertEqual(produto['campos_personalizados']['codauxiliar']['valor'], 6001)
+            self.assertIsNone(database.consultar_produto_previa(7))
 
     def test_excluido_nao_e_classificado_como_apenas_sem_preco(self):
         self.assertTrue(database.produto_existe('6', ('codprod',)))
@@ -96,3 +118,11 @@ class ProdutosExcluidosTests(unittest.TestCase):
         self.assertEqual(database.consultar_custos(6, {'filiais_permitidas': []}), [])
         self.assertEqual(margem_departamento.calcular_margens_departamento(10, '1',
             escopo={'tabelas_permitidas': ['2']}), [])
+
+    def test_campos_personalizados_retornam_do_banco_sem_liberar_excluidos(self):
+        with patch('modulos.campos_produto.obter_campos_produto', return_value=[
+            {'coluna': 'CODAUXILIAR', 'permissao': 'consulta_preco'}]):
+            produtos = database.consultar_produto('6', ('codprod',))
+            self.assertEqual(produtos[0]['campos_personalizados'], {
+                'codauxiliar': {'valor': 6001, 'permissao': 'consulta_preco'}})
+            self.assertEqual(database.consultar_produto('7', ('codprod',)), [])

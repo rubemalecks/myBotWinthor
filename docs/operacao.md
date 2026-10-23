@@ -21,7 +21,9 @@ C:\Sistemas\
     ├── config_bot.json           ← Telegram e opções do painel
     ├── config_oracle.json        ← servidor e credenciais Oracle
     ├── dados_bot.json            ← usuários, perfis, permissões e hash da senha
-    └── mensagens.json            ← respostas personalizadas, criado ao salvar no painel
+    ├── mensagens.json            ← respostas personalizadas, criado ao salvar no painel
+    ├── campos_produto.json       ← campos registrados automaticamente nas mensagens
+    └── formulas_margem.json      ← regras personalizadas de cálculo
 ```
 
 Se `BOT_DATA_DIR` estiver preenchido no `.env`, **esse caminho substitui a pasta padrão**. Caminhos relativos são resolvidos a partir da pasta do projeto. Para consultar o caminho efetivo, abra **Bot → Armazenamento** no painel. Renomear ou mover a pasta do projeto pode mudar o caminho padrão; configure `BOT_DATA_DIR` para manter um local fixo.
@@ -39,7 +41,7 @@ O backup deve conter **a pasta de dados inteira, com os JSONs da mesma parada do
 1. Pare o bot/painel com **Ctrl+C** ou pare o serviço do Windows, se a execução for por serviço. Confirme que não há outra instância gravando.
 2. Confira o caminho efetivo da pasta de dados.
 3. Copie a pasta inteira para uma nova pasta de backup identificada por data e hora.
-4. Confira se `config_bot.json`, `config_oracle.json` e `dados_bot.json` estão na cópia. Se personalizou as respostas, confira também `mensagens.json`.
+4. Confira se `config_bot.json`, `config_oracle.json` e `dados_bot.json` estão na cópia. Se houver personalizações, confira também `mensagens.json`, `campos_produto.json` e `formulas_margem.json`.
 5. Inicie o projeto novamente. Faça isso antes de atualizações, migrações e alterações manuais nos JSONs.
 
 Exemplo de cópia no PowerShell, **com o projeto parado**. Ajuste a origem para o caminho real da sua instalação:
@@ -200,6 +202,8 @@ As guias **Bot** e **Servidor Oracle** possuem salvamento e testes independentes
 - `config_oracle.json`: servidor, usuário, senha e demais opções Oracle.
 - `dados_bot.json`: usuários, perfis, permissões e hash da senha do painel.
 - `mensagens.json`: padrões de resposta personalizados pela guia **Personalização**, criado no primeiro salvamento. Copie também este arquivo para conservar as mensagens ao migrar ou restaurar a instalação.
+- `campos_produto.json`: colunas adicionais de `PCPRODUT` registradas automaticamente ao salvar mensagens e permissões de visualização de cada uma. Copie junto de `mensagens.json` para conservar as variáveis usadas nas respostas.
+- `formulas_margem.json`: regras de cálculo cadastradas em **Personalização → Fórmulas**. Inclua no backup para preservar ajustes, filtros e vínculos com produtos.
 
 Na primeira inicialização após atualizar, as configurações do antigo JSON único são transferidas automaticamente para os novos arquivos. Faça backup da pasta de dados inteira; as credenciais continuam armazenadas nos JSONs de configuração. Alterações manuais devem ser feitas com o bot parado.
 

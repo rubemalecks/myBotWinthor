@@ -1,6 +1,7 @@
 """Modelos de texto do bot, com variáveis limitadas por bloco de permissão."""
 import logging
 from string import Formatter
+from modulos.campos_produto import exemplos_campos_produto, obter_campos_produto
 
 from modulos.permissoes import (
     obter_mensagens_personalizadas, salvar_mensagens_personalizadas,
@@ -91,14 +92,39 @@ MODELOS = {
 }
 
 
-def validar_modelo(chave, texto):
+def exemplos_modelo(chave):
+    exemplos = dict(MODELOS[chave]['exemplo'])
+    if chave in ('produto', 'formula_produto'):
+        exemplos.update(exemplos_campos_produto())
+    return exemplos
+
+
+def validar_campos_em_uso(novos):
+    removidas = {campo['coluna'].lower() for campo in obter_campos_produto(estrito=True)} - {campo['coluna'].lower() for campo in novos}
+    if not removidas:
+        return
+    modelos = obter_mensagens_personalizadas()
+    for chave in ('produto', 'formula_produto'):
+        texto = modelos.get(chave, MODELOS[chave]['padrao'])
+        try:
+            usadas = {campo for _, campo, _, _ in Formatter().parse(texto) if campo is not None}
+        except ValueError:
+            continue
+        if removidas & usadas:
+            raise ValueError(f'Remova as variáveis {", ".join(sorted(removidas & usadas))} do modelo "{MODELOS[chave]["titulo"]}" antes de desabilitar esses campos.')
+
+
+def validar_modelo(chave, texto, campos=None):
     if chave not in MODELOS:
         raise ValueError('Tipo de mensagem desconhecido.')
     if not isinstance(texto, str) or not texto.strip() or len(texto) > LIMITE_MODELO:
         raise ValueError(f'O texto deve ter de 1 a {LIMITE_MODELO} caracteres.')
+    exemplos = exemplos_modelo(chave)
+    if campos is not None and chave in ('produto', 'formula_produto'):
+        exemplos.update({campo['coluna'].lower(): 'EXEMPLO' for campo in campos})
     try:
         for _, campo, formato, conversao in Formatter().parse(texto):
-            if campo is not None and (campo not in MODELOS[chave]['exemplo'] or formato or conversao):
+            if campo is not None and (campo not in exemplos or formato or conversao):
                 raise ValueError(f'Variável não permitida: {{{campo}}}. Use as variáveis indicadas neste modelo.')
     except ValueError as erro:
         raise ValueError(f'Modelo inválido: {erro}') from erro
@@ -107,7 +133,7 @@ def validar_modelo(chave, texto):
 
 def listar_modelos():
     salvos = obter_mensagens_personalizadas()
-    return [{'id': chave, **modelo, 'texto': salvos.get(chave, modelo['padrao']),
+    return [{'id': chave, **modelo, 'exemplo': exemplos_modelo(chave), 'texto': salvos.get(chave, modelo['padrao']),
              'personalizado': chave in salvos} for chave, modelo in MODELOS.items()]
 
 
@@ -121,11 +147,17 @@ def salvar_modelos(alteracoes):
     return listar_modelos()
 
 
-def previa_modelo(chave, texto):
-    return validar_modelo(chave, texto).format_map(MODELOS[chave]['exemplo'])
+def previa_modelo(chave, texto, valores=None, campos=None):
+    contexto = exemplos_modelo(chave) if chave in MODELOS else {}
+    if campos is not None and chave in ('produto', 'formula_produto'):
+        for campo in campos:
+            contexto.setdefault(campo['coluna'].lower(), 'EXEMPLO')
+    if valores is not None:
+        contexto = {campo: str(valores.get(campo, 'Não informado')) for campo in contexto}
+    return validar_modelo(chave, texto, campos).format_map(contexto)
 
 
-def renderizar_mensagem(chave, **valores):
+def renderizar_mensagem(chave, /, **valores):
     modelo = MODELOS[chave]
     try:
         texto = obter_mensagens_personalizadas().get(chave, modelo['padrao'])
@@ -134,5 +166,5 @@ def renderizar_mensagem(chave, **valores):
         logger.warning('Modelo de mensagem inválido ou indisponível: %s. Usando padrão.', chave)
         texto = modelo['padrao']
     # Somente as variáveis deste bloco entram no contexto. Nunca avalia expressões.
-    contexto = {campo: str(valores.get(campo, 'Não informado')) for campo in modelo['exemplo']}
+    contexto = {campo: str(valores.get(campo, 'Não informado')) for campo in exemplos_modelo(chave)}
     return texto.format_map(contexto)

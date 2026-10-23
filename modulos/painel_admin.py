@@ -8,6 +8,7 @@ import secrets
 import socket
 import time
 from pathlib import Path
+from asyncio import to_thread
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -17,9 +18,13 @@ from starlette.middleware.sessions import SessionMiddleware
 from telegram import Bot
 from telegram.error import InvalidToken, NetworkError, TelegramError
 
-from modulos.database import ErroAcessoWinthor, testar_conexao_oracle, listar_opcoes_acesso
+from modulos.database import ErroAcessoWinthor, testar_conexao_oracle, listar_opcoes_acesso, listar_colunas_produto, consultar_produto_previa
 from modulos.escopo import CHAVES_ESCOPO
-from modulos.mensagens import listar_modelos, salvar_modelos, previa_modelo, LIMITE_MODELO
+from modulos.mensagens import listar_modelos, salvar_modelos, previa_modelo, validar_campos_em_uso, validar_modelo, LIMITE_MODELO
+from modulos.campos_produto import obter_campos_produto, salvar_campos_produto, validar_campos, valores_campos_produto, LIMITE_CAMPOS
+from modulos.painel_formulas import instalar_formulas, HTML_FORMULAS, JS_FORMULAS
+from modulos.campos_mensagem import preparar_mensagens
+from modulos.permissoes import salvar_configuracao_campos_produto
 from modulos.permissoes import (
     CHAVES_CONFIGURACAO,
     CHAVES_SECRETAS,
@@ -199,6 +204,14 @@ PAGINA = """<!doctype html>
     #message-preview { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--field); border:1px solid var(--border); border-radius:10px; padding:16px; min-height:180px; line-height:1.6; }
     #message-error { color:var(--accent); }
     #message-error:empty { display:none; }
+    .product-fields-list { max-height:310px; overflow:auto; margin:12px 0; }
+    .product-field-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; padding:8px 2px; border-bottom:1px solid var(--border); }
+    .product-field-row label { display:flex; align-items:center; gap:8px; margin:0; }
+    .product-field-row code { font-size:.8rem; color:var(--accent); }
+    .personalization-nav { display:flex; flex-wrap:wrap; gap:8px; padding:12px 0; margin:4px 0 16px; border-bottom:1px solid var(--border); }
+    .personalization-nav button { background:var(--field); color:var(--muted); border:1px solid var(--border); }
+    .personalization-nav button[aria-selected="true"] { color:var(--text); border-color:var(--accent); box-shadow:inset 0 -2px var(--accent); }
+    .product-field-row select { max-width:100%; background:var(--field); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px; }
     @media(max-width:720px) { .message-layout { grid-template-columns:1fr; } }
     #caps-warning { display:block; font-size:.78rem; color:var(--muted); margin-top:6px; }
     body:has(#dashboard[hidden]) .brand-footer { padding-top:14px; }
@@ -351,7 +364,12 @@ PAGINA = """<!doctype html>
       </section><div id="profile-templates"></div>
     </div>
     <div id="panel-personalization" role="tabpanel" aria-labelledby="tab-personalization" tabindex="0" hidden>
-      <section class="card">
+      <div class="personalization-nav" role="tablist" aria-label="Tarefas de personalização">
+        <button type="button" id="personalization-messages-tab" role="tab" aria-controls="personalization-messages" aria-selected="true">Mensagens</button>
+        <button type="button" id="personalization-formulas-tab" role="tab" aria-controls="personalization-formulas" aria-selected="false" tabindex="-1">Fórmulas</button>
+      </div>
+
+      <section class="card" id="personalization-messages" role="tabpanel" aria-labelledby="personalization-messages-tab" tabindex="0">
         <h2>Mensagens do bot</h2>
         <p class="muted compact-help">Personalize o padrão de retorno para seus clientes. Consultas por código, foto e nome usam os mesmos blocos de produto. Custos, lucro e preço programado continuam dependendo das permissões do usuário.</p>
         <div class="message-layout">
@@ -361,7 +379,7 @@ PAGINA = """<!doctype html>
             <label for="message-content">Texto da mensagem</label>
             <textarea id="message-content" rows="9" maxlength="2500" required spellcheck="false" aria-describedby="message-hint message-counter"></textarea>
             <small id="message-counter" class="muted"></small>
-            <p id="message-hint" class="muted compact-help">Clique em uma variável para inseri-la no texto. Mantenha as chaves, como {descricao}. Quebras de linha e emojis são permitidos.</p>
+            <p id="message-hint" class="muted compact-help">Nos blocos de identificação do produto, digite qualquer coluna válida de PCPRODUT entre chaves, como {embalagem} ou {codauxiliar}. O campo é validado no Oracle ao testar ou salvar. Maiúsculas e minúsculas são aceitas.</p>
             <div id="message-variables" class="message-variables" role="group" aria-label="Variáveis disponíveis"></div>
             <p id="message-error" role="alert"></p>
             <div class="form-actions"><button id="message-save" type="submit">Salvar mensagem</button>
@@ -369,11 +387,19 @@ PAGINA = """<!doctype html>
             <small class="muted">O padrão restaurado só será aplicado depois de salvar. Alterações valem nas próximas consultas, sem reiniciar.</small>
           </form>
           <div><h3>Prévia deste bloco</h3>
-            <p class="muted compact-help">Dados fictícios para ilustrar o texto. O resultado completo combina os blocos autorizados para cada usuário.</p>
+            <p id="message-preview-source" class="muted compact-help">Dados fictícios para ilustrar o texto. O resultado completo combina os blocos autorizados para cada usuário.</p>
+            <div id="message-real-controls" hidden>
+              <label for="message-product-code">Testar com produto real (CODPROD)</label>
+              <input type="text" id="message-product-code" inputmode="numeric" placeholder="Ex.: 6">
+              <div class="form-actions"><button type="button" id="message-real-preview">Consultar produto</button><button type="button" id="message-example-preview" class="secondary">Usar exemplo fictício</button></div>
+              <p class="muted compact-help">Digite o campo na mensagem e consulte um produto para testar. Salvar mensagem ativa os campos automaticamente. No bot, campos adicionais de custo e colunas sem classificação pública exigem permissão de custos.</p>
+            </div>
+            <p id="message-preview-error" role="alert" class="compact-help"></p>
             <div id="message-preview" role="status" aria-live="polite"></div>
           </div>
         </div>
       </section>
+      <section class="card" id="personalization-formulas" role="tabpanel" aria-labelledby="personalization-formulas-tab" tabindex="0" hidden><!-- FORMULAS --></section>
     </div>
   </main>
   <footer class="brand-footer">
@@ -419,7 +445,7 @@ PAGINA = """<!doctype html>
       if (parts.length < 4 && parts[parts.length - 1].length === 3 &&
           parts.every(part => Number(part) <= 255)) hostField.value += ".";
     });
-    const tabs = [...document.querySelectorAll('[role="tab"]')];
+    const tabs = [...document.querySelectorAll('.dashboard-nav [role="tab"]')];
     function selectTab(tab) {
       for (const item of tabs) {
         const selected = item === tab;
@@ -428,7 +454,7 @@ PAGINA = """<!doctype html>
         document.getElementById(item.getAttribute("aria-controls")).hidden = !selected;
       }
       if (tab.id === "tab-personalization") {
-        carregarPersonalizacao().catch(error => { notificarTemporariamente(error.message, 10000); });
+        carregarSubabaPersonalizacao().catch(error => { notificarTemporariamente(error.message, 10000); });
       }
     }
     tabs.forEach((tab, index) => {
@@ -440,6 +466,31 @@ PAGINA = """<!doctype html>
         if (event.key === "Home") next = tabs[0];
         if (event.key === "End") next = tabs[tabs.length - 1];
         if (next) { event.preventDefault(); selectTab(next); next.focus(); }
+      });
+    });
+    const personalizationTabs = [...document.querySelectorAll('.personalization-nav [role="tab"]')];
+    async function carregarSubabaPersonalizacao() {
+      const selected = personalizationTabs.find(tab => tab.getAttribute('aria-selected') === 'true');
+      if (selected.id === 'personalization-messages-tab') await carregarPersonalizacao();
+      if (selected.id === 'personalization-formulas-tab') await carregarManutencaoFormulas();
+    }
+    function selectPersonalizationTab(tab) {
+      for (const item of personalizationTabs) {
+        const selected = item === tab;
+        item.setAttribute('aria-selected', String(selected)); item.tabIndex = selected ? 0 : -1;
+        document.getElementById(item.getAttribute('aria-controls')).hidden = !selected;
+      }
+      carregarSubabaPersonalizacao().catch(error => notificarTemporariamente(error.message, 10000));
+    }
+    personalizationTabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => selectPersonalizationTab(tab));
+      tab.addEventListener('keydown', event => {
+        let next;
+        if (event.key === 'ArrowRight') next = personalizationTabs[(index + 1) % personalizationTabs.length];
+        if (event.key === 'ArrowLeft') next = personalizationTabs[(index + personalizationTabs.length - 1) % personalizationTabs.length];
+        if (event.key === 'Home') next = personalizationTabs[0];
+        if (event.key === 'End') next = personalizationTabs[personalizationTabs.length - 1];
+        if (next) { event.preventDefault(); selectPersonalizationTab(next); next.focus(); }
       });
     });
     const themeToggle = document.querySelector("#theme-toggle");
@@ -508,29 +559,48 @@ PAGINA = """<!doctype html>
     const messageDrafts = new Map();
     let previewTimer;
     let previewVersion = 0;
-    function atualizarPreviaMensagem() {
+    let messagePreviewProduct = '';
+    async function atualizarPreviaMensagem(imediata = false) {
       window.clearTimeout(previewTimer);
       const version = ++previewVersion;
       const id = messageSelect.value;
       const texto = messageContent.value;
+      const codigo = ['produto', 'formula_produto'].includes(id) ? messagePreviewProduct : '';
       messageError.textContent = "";
+      document.getElementById('message-preview-error').textContent = '';
       document.getElementById("message-counter").textContent = `${texto.length} / ${messageContent.maxLength} caracteres`;
-      messagePreview.textContent = "Atualizando prévia…";
-      previewTimer = window.setTimeout(async () => {
+      messagePreview.textContent = codigo ? `Consultando PCPRODUT para o CODPROD ${codigo}…` : "Atualizando prévia…";
+      const executar = async () => {
+        const button = document.getElementById('message-real-preview');
+        if(codigo) { button.disabled = true; button.textContent = 'Consultando…'; }
         try {
-          const result = await request("/api/message-templates/preview", {method:"POST", body:JSON.stringify({id, texto})});
+          const result = await request("/api/message-templates/preview", {method:"POST", body:JSON.stringify({id, texto, ...(codigo ? {codprod:codigo} : {})})});
           if (version !== previewVersion) return;
           messagePreview.textContent = result.texto;
+          if(codigo && result.codprod !== codigo) throw new Error('O servidor não confirmou a consulta real. Atualize o painel e tente novamente.');
+          document.getElementById('message-preview-source').textContent = codigo ? `Dados reais do produto ${codigo}. Prévia administrativa deste bloco.` : 'Dados fictícios para ilustrar o texto. O resultado completo combina os blocos autorizados para cada usuário.';
         } catch (error) {
           if (version !== previewVersion) return;
-          messagePreview.textContent = "Corrija o texto para visualizar a mensagem.";
+          messagePreview.textContent = "Não foi possível gerar a prévia. Confira o aviso abaixo.";
           messageError.textContent = error.message;
+          document.getElementById('message-preview-error').textContent = error.message;
+        } finally {
+          if(version === previewVersion) { button.disabled = false; button.textContent = 'Consultar produto'; }
         }
-      }, 250);
+      };
+      if(imediata) await executar();
+      else previewTimer = window.setTimeout(executar, codigo ? 650 : 250);
     }
+    document.getElementById('message-real-preview').addEventListener('click', async () => {
+      const codigo = document.getElementById('message-product-code').value.trim();
+      if (!/^[0-9]+$/.test(codigo)) { messageError.textContent = 'Informe um CODPROD numérico positivo.'; return; }
+      messagePreviewProduct = codigo; await atualizarPreviaMensagem(true);
+    });
+    document.getElementById('message-example-preview').addEventListener('click', () => { messagePreviewProduct = ''; atualizarPreviaMensagem(true); });
     function mostrarEditorMensagem() {
       const model = messageTemplates.find(item => item.id === messageSelect.value);
       if (!model) return;
+      document.getElementById('message-real-controls').hidden = !['produto', 'formula_produto'].includes(model.id);
       messageContent.value = messageDrafts.has(model.id) ? messageDrafts.get(model.id) : model.texto;
       const variables = document.getElementById("message-variables"); variables.replaceChildren();
       for (const [name, example] of Object.entries(model.exemplo)) {
@@ -1215,6 +1285,11 @@ def _exigir_csrf(request):
         raise HTTPException(status_code=403, detail="Token de segurança inválido.")
 
 
+instalar_formulas(app, _exigir_admin, _exigir_csrf)
+PAGINA = PAGINA.replace('<!-- FORMULAS -->', HTML_FORMULAS)
+PAGINA = PAGINA.replace('    const removeSpaces =', JS_FORMULAS + '\n    const removeSpaces =')
+
+
 @app.get("/", response_class=HTMLResponse)
 def pagina_inicial():
     return HTMLResponse(PAGINA, headers={"Cache-Control": "no-store"})
@@ -1342,6 +1417,50 @@ def obter_configuracoes_painel(request: Request):
     return resposta
 
 
+@app.get("/api/product-fields")
+def campos_produto_painel(request: Request):
+    _exigir_admin(request)
+    try:
+        return {'campos': obter_campos_produto(estrito=True), 'limite': LIMITE_CAMPOS}
+    except RuntimeError as erro:
+        raise HTTPException(status_code=503, detail=str(erro)) from erro
+
+
+@app.get("/api/product-fields/catalog")
+def catalogo_campos_produto(request: Request):
+    _exigir_admin(request)
+    try:
+        return {'colunas': listar_colunas_produto()}
+    except Exception as erro:
+        logger.warning('Falha ao listar colunas de PCPRODUT (%s)', type(erro).__name__)
+        raise HTTPException(status_code=503, detail='Não foi possível carregar os campos de PCPRODUT. Confira a conexão e o acesso do usuário Oracle.') from erro
+
+
+@app.put("/api/product-fields")
+async def atualizar_campos_produto_painel(request: Request):
+    _exigir_admin(request)
+    _exigir_csrf(request)
+    try:
+        dados = await request.json()
+        if not isinstance(dados, dict) or set(dados) != {'campos'}:
+            raise ValueError('Informe os campos do produto.')
+        campos = validar_campos(dados['campos'])
+        validar_campos_em_uso(campos)
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from erro
+    except RuntimeError as erro:
+        raise HTTPException(status_code=503, detail=str(erro)) from erro
+    try:
+        catalogo = await to_thread(listar_colunas_produto) if campos else []
+        salvos = salvar_campos_produto(campos, catalogo)
+        return {'campos': salvos, 'limite': LIMITE_CAMPOS}
+    except ValueError as erro:
+        raise HTTPException(status_code=400, detail=str(erro)) from erro
+    except Exception as erro:
+        logger.warning('Falha ao salvar campos de PCPRODUT (%s)', type(erro).__name__)
+        raise HTTPException(status_code=503, detail='Não foi possível salvar os campos. Confira a conexão Oracle e o acesso à pasta de dados.') from erro
+
+
 @app.get("/api/message-templates")
 def modelos_mensagem(request: Request):
     _exigir_admin(request)
@@ -1359,11 +1478,20 @@ async def atualizar_modelos_mensagem(request: Request):
         dados = await request.json()
         if not isinstance(dados, dict) or set(dados) != {'templates'}:
             raise ValueError('Informe os modelos de mensagem.')
-        return {'templates': salvar_modelos(dados['templates']), 'limite': LIMITE_MODELO}
+        textos, campos, precisa_catalogo = preparar_mensagens(dados['templates'])
+        if precisa_catalogo:
+            catalogo = await to_thread(listar_colunas_produto)
+            textos, campos, _ = preparar_mensagens(dados['templates'], catalogo)
+        if campos != obter_campos_produto(estrito=True):
+            salvar_configuracao_campos_produto(campos)
+        return {'templates': salvar_modelos(textos), 'limite': LIMITE_MODELO}
     except ValueError as erro:
         raise HTTPException(status_code=400, detail=str(erro)) from erro
     except (RuntimeError, OSError) as erro:
         raise HTTPException(status_code=503, detail='Não foi possível salvar mensagens.json. Verifique a pasta de dados.') from erro
+    except Exception as erro:
+        logger.warning('Falha ao validar colunas da mensagem (%s)', type(erro).__name__)
+        raise HTTPException(503, 'Não foi possível validar as colunas no Oracle. Confira a conexão.') from erro
 
 
 @app.post("/api/message-templates/preview")
@@ -1372,11 +1500,32 @@ async def previa_mensagem(request: Request):
     _exigir_csrf(request)
     try:
         dados = await request.json()
-        if not isinstance(dados, dict) or set(dados) != {'id', 'texto'} or not isinstance(dados['id'], str):
+        if not isinstance(dados, dict) or not {'id', 'texto'}.issubset(dados) or not set(dados).issubset({'id', 'texto', 'codprod'}) or not isinstance(dados['id'], str):
             raise ValueError('Informe o tipo e o texto da mensagem.')
-        return {'texto': previa_modelo(dados['id'], dados['texto'])}
+        textos, campos, precisa_catalogo = preparar_mensagens({dados['id']: dados['texto']})
+        if precisa_catalogo:
+            catalogo = await to_thread(listar_colunas_produto)
+            textos, campos, _ = preparar_mensagens({dados['id']: dados['texto']}, catalogo)
+        texto = textos[dados['id']]
+        if 'codprod' in dados:
+            codigo = str(dados['codprod'])
+            if dados['id'] not in ('produto', 'formula_produto') or not codigo.isascii() or not codigo.isdecimal() or not 0 < int(codigo) < 10**15:
+                raise ValueError('Use um CODPROD positivo na identificação do produto.')
+            produto = await to_thread(consultar_produto_previa, codigo, campos)
+            if produto is None:
+                raise HTTPException(404, 'Produto não encontrado ou excluído.')
+            valores = {'codprod': produto['codprod'], 'descricao': produto['descricao'],
+                       **valores_campos_produto(produto, ('consulta_preco', 'ver_custos'))}
+            return {'texto': previa_modelo(dados['id'], texto, valores, campos), 'codprod': codigo,
+                    'fonte': 'oracle', 'campos': list(valores)}
+        return {'texto': previa_modelo(dados['id'], texto, campos=campos)}
     except ValueError as erro:
         raise HTTPException(status_code=400, detail=str(erro)) from erro
+    except HTTPException:
+        raise
+    except Exception as erro:
+        logger.warning('Falha na prévia real da mensagem (%s)', type(erro).__name__)
+        raise HTTPException(503, 'Não foi possível consultar o produto. Verifique o Oracle e os campos configurados.') from erro
 
 
 @app.get("/api/windows-service")

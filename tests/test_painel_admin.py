@@ -27,6 +27,141 @@ from modulos.painel_admin import app
 
 
 class PainelAdminTests(unittest.TestCase):
+    def test_coluna_digitada_testa_sem_cadastrar_e_salva_automaticamente(self):
+        headers = {'X-CSRF-Token': self.csrf}
+        with patch.object(painel_admin, 'listar_colunas_produto', return_value=[{'coluna':'EMBALAGEM'}]), patch.object(painel_admin, 'consultar_produto_previa') as consulta:
+            consulta.return_value = {'codprod':6,'descricao':'Abobrinha','campos_personalizados':{
+                'embalagem':{'valor':'KG','permissao':'consulta_preco'}}}
+            resposta = self.client.post('/api/message-templates/preview', headers=headers,
+                json={'id':'produto','texto':'{DESCRICAO} {EMBALAGEM}','codprod':'6'})
+            self.assertEqual(resposta.status_code, 200, resposta.text)
+            self.assertEqual(resposta.json()['texto'], 'Abobrinha KG')
+            self.assertFalse(permissoes.ARQUIVO_DADOS.with_name('campos_produto.json').exists())
+            self.assertEqual(consulta.call_args.args[1], [{'coluna':'EMBALAGEM','permissao':'consulta_preco'}])
+            resposta = self.client.put('/api/message-templates', headers=headers,
+                json={'templates':{'produto':'{DESCRICAO} {EMBALAGEM}'}})
+            self.assertEqual(resposta.status_code, 200, resposta.text)
+            self.assertEqual(permissoes.obter_mensagens_personalizadas()['produto'], '{descricao} {embalagem}')
+        from modulos.mensagens import renderizar_mensagem
+        self.assertEqual(renderizar_mensagem('produto', descricao='Abobrinha', embalagem='KG'), 'Abobrinha KG')
+
+    def test_coluna_inexistente_ou_expressao_nao_persiste(self):
+        headers = {'X-CSRF-Token': self.csrf}
+        with patch.object(painel_admin, 'listar_colunas_produto', return_value=[{'coluna':'EMBALAGEM'}]):
+            for texto in ('{NAO_EXISTE}', '{PCPRODUT.EMBALAGEM}', '{embalagem!r}', '{embalagem:10}'):
+                resposta = self.client.put('/api/message-templates', headers=headers, json={'templates':{'produto':texto}})
+                self.assertEqual(resposta.status_code, 400, resposta.text)
+        self.assertEqual(permissoes.obter_mensagens_personalizadas(), {})
+        self.assertFalse(permissoes.ARQUIVO_DADOS.with_name('campos_produto.json').exists())
+
+    def test_previa_mensagem_com_campo_real_e_nulo(self):
+        headers = {'X-CSRF-Token':self.csrf}
+        with patch.object(painel_admin, 'listar_colunas_produto', return_value=[{'coluna':'VOLUME'}]), patch.object(painel_admin, 'consultar_produto_previa') as consulta:
+            consulta.return_value = {'codprod':6,'descricao':'PRODUTO REAL','campos_personalizados':{
+                'volume':{'valor':12,'permissao':'ver_custos'}}}
+            resposta = self.client.post('/api/message-templates/preview', headers=headers,
+                json={'id':'produto','texto':'{codprod} {descricao} Volume: {volume}','codprod':'6'})
+            self.assertEqual(resposta.status_code, 200, resposta.text)
+            self.assertEqual(resposta.json()['texto'], '6 PRODUTO REAL Volume: 12')
+            consulta.return_value['campos_personalizados']['volume']['valor'] = None
+            resposta = self.client.post('/api/message-templates/preview', headers=headers,
+                json={'id':'produto','texto':'Volume: {volume}','codprod':'6'})
+            self.assertEqual(resposta.json()['texto'], 'Volume: Não informado')
+            consulta.return_value = None
+            self.assertEqual(self.client.post('/api/message-templates/preview', headers=headers,
+                json={'id':'produto','texto':'{volume}','codprod':'6'}).status_code, 404)
+        with patch.object(painel_admin, 'listar_colunas_produto', return_value=[]), patch.object(painel_admin, 'consultar_produto_previa') as consulta:
+            self.assertEqual(self.client.post('/api/message-templates/preview', headers=headers,
+                json={'id':'produto','texto':'{senha}','codprod':'6'}).status_code, 400)
+            consulta.assert_not_called()
+
+    def test_confirmar_formula_sem_produto_nao_consulta_oracle_nem_salva(self):
+        anonimo = TestClient(app)
+        self.assertEqual(anonimo.post('/api/formulas/draft', json={}).status_code, 401)
+        self.assertEqual(self.client.post('/api/formulas/draft', json={}).status_code, 403)
+        headers = {'X-CSRF-Token':self.csrf}
+        with patch('modulos.painel_formulas.listar_catalogo_formulas') as catalogo, patch('modulos.painel_formulas.consultar_calculos_formulas_produto') as consultar:
+            resposta = self.client.post('/api/formulas/draft', headers=headers, json={'ajustes':[
+                {'alvo':'custo','operacao':'+','tipo':'valor','valor':'10'}]})
+            self.assertEqual(resposta.status_code, 200, resposta.text)
+            self.assertIn('(custo) + 10', resposta.json()['expressao'])
+            self.assertFalse(permissoes.ARQUIVO_DADOS.with_name('formulas_margem.json').exists())
+            invalida = self.client.post('/api/formulas/draft', headers=headers, json={'ajustes':[
+                {'alvo':'custo','operacao':'+','tipo':'valor','valor':'abc'}]})
+            self.assertEqual(invalida.status_code, 400)
+            catalogo.assert_not_called()
+            consultar.assert_not_called()
+
+    def test_formulas_exigem_sessao_csrf_e_persistem_localmente(self):
+        anonimo = TestClient(app)
+        self.assertEqual(anonimo.get('/api/formulas').status_code, 401)
+        regra = {'nome':'Custo com frete','produtos':[6],'ajustes':[{'alvo':'custo','operacao':'+','tipo':'valor','valor':'2'}]}
+        self.assertEqual(self.client.put('/api/formulas', json=regra).status_code, 403)
+        headers = {'X-CSRF-Token':self.csrf}
+        with patch('modulos.painel_formulas.listar_catalogo_formulas', return_value=[]):
+            resposta = self.client.put('/api/formulas', json=regra, headers=headers)
+        self.assertEqual(resposta.status_code, 200, resposta.text)
+        identificador = resposta.json()['regras'][0]['id']
+        self.assertTrue(permissoes.ARQUIVO_DADOS.with_name('formulas_margem.json').exists())
+        with patch('modulos.painel_formulas.listar_catalogo_formulas', return_value=[]), patch('modulos.painel_formulas.consultar_calculos_formulas_produto', return_value=[]) as consulta:
+            resposta = self.client.post('/api/formulas/preview', headers=headers, json={'codprod':'6','regra':regra})
+            self.assertEqual(resposta.status_code, 200)
+            consulta.assert_called_once()
+        self.assertEqual(self.client.delete('/api/formulas/'+identificador, headers=headers).status_code, 200)
+        self.assertEqual(self.client.get('/api/formulas').json()['regras'], [])
+
+    def test_campos_produto_exigem_login_e_csrf(self):
+        anonimo = TestClient(app)
+        self.assertEqual(anonimo.get('/api/product-fields').status_code, 401)
+        self.assertEqual(anonimo.get('/api/product-fields/catalog').status_code, 401)
+        self.assertEqual(anonimo.put('/api/product-fields', json={'campos': []}).status_code, 401)
+        self.assertEqual(self.client.put('/api/product-fields', json={'campos': []}).status_code, 403)
+
+    def test_campo_habilitado_disponibiliza_variavel_na_mensagem(self):
+        headers = {'X-CSRF-Token': self.csrf}
+        catalogo = [{'coluna': 'CODAUXILIAR', 'variavel': 'codauxiliar', 'tipo': 'NUMBER', 'permissao_padrao': 'consulta_preco'}]
+        with patch.object(painel_admin, 'listar_colunas_produto', return_value=catalogo):
+            self.assertEqual(self.client.get('/api/product-fields/catalog').json()['colunas'], catalogo)
+            resposta = self.client.put('/api/product-fields', headers=headers, json={'campos': [{'coluna': 'CODAUXILIAR'}]})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json()['campos'], [{'coluna': 'CODAUXILIAR', 'permissao': 'consulta_preco'}])
+        self.assertTrue(permissoes.ARQUIVO_DADOS.with_name('campos_produto.json').exists())
+        previa = self.client.post('/api/message-templates/preview', headers=headers,
+            json={'id': 'produto', 'texto': 'EAN: {codauxiliar}'})
+        self.assertEqual(previa.status_code, 200)
+        self.assertIn('7891234567890', previa.json()['texto'])
+        resposta = self.client.put('/api/message-templates', headers=headers, json={'templates': {'produto': 'EAN: {codauxiliar}'}})
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(self.client.put('/api/product-fields', headers=headers, json={'campos': []}).status_code, 400)
+
+    def test_campos_invalidos_nao_chegam_ao_oracle(self):
+        headers = {'X-CSRF-Token': self.csrf}
+        with patch.object(painel_admin, 'listar_colunas_produto') as listar:
+            for corpo in ([], {'campos': 'CODAUXILIAR'}, {'campos': [{'coluna': 'P.CODAUXILIAR'}]},
+                          {'campos': [{'coluna': 'CODAUXILIAR', 'permissao': 'admin'}]}):
+                with self.subTest(corpo=corpo):
+                    self.assertEqual(self.client.put('/api/product-fields', headers=headers, json=corpo).status_code, 400)
+        listar.assert_not_called()
+
+    def test_catalogo_indisponivel_preserva_configuracao_salva(self):
+        headers = {'X-CSRF-Token': self.csrf}
+        with patch.object(painel_admin, 'listar_colunas_produto', return_value=[{'coluna': 'CODAUXILIAR'}]):
+            self.client.put('/api/product-fields', headers=headers, json={'campos': [{'coluna': 'CODAUXILIAR'}]})
+        with patch.object(painel_admin, 'listar_colunas_produto', side_effect=RuntimeError('indisponível')):
+            self.assertEqual(self.client.get('/api/product-fields/catalog').status_code, 503)
+            resposta = self.client.get('/api/product-fields')
+            self.assertEqual(resposta.status_code, 200)
+            self.assertEqual(resposta.json()['campos'][0]['coluna'], 'CODAUXILIAR')
+            self.assertEqual(self.client.put('/api/product-fields', headers=headers, json={'campos': [{'coluna': 'CODEPTO'}]}).status_code, 503)
+        self.assertEqual(self.client.get('/api/product-fields').json(), resposta.json())
+
+    def test_campo_ausente_no_catalogo_nao_e_salvo(self):
+        with patch.object(painel_admin, 'listar_colunas_produto', return_value=[]):
+            resposta = self.client.put('/api/product-fields', headers={'X-CSRF-Token': self.csrf},
+                json={'campos': [{'coluna': 'CODAUXILIAR'}]})
+        self.assertEqual(resposta.status_code, 400)
+        self.assertFalse(permissoes.ARQUIVO_DADOS.with_name('campos_produto.json').exists())
+
     def test_personalizacao_exige_login_e_csrf(self):
         anonimo = TestClient(app)
         self.assertEqual(anonimo.get('/api/message-templates').status_code, 401)

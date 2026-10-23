@@ -54,6 +54,10 @@ config_oracle.json
 config_oracle.json.*
 mensagens.json
 mensagens.json.*
+campos_produto.json
+campos_produto.json.*
+formulas_margem.json
+formulas_margem.json.*
 *-dados/
 dados/
 .dados_bot.json.*.tmp

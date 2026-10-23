@@ -69,6 +69,10 @@ def calcular_margens_departamento(codigo_departamento, codigo_filial, regiao=Non
     Só produtos com PVENDA > 0 e CUSTOULTENT não nulo são somados.
     Custo 0 é incluído e informado na contagem de custo zero.
     """
+    from modulos.regras_margem import obter_regras
+    regras = obter_regras(ativas=True)
+    if regras:
+        return _calcular_com_regras(codigo_departamento, codigo_filial, regiao, escopo, regras)
     sql = """
         WITH BASE AS (
             SELECT T.NUMREGIAO, R.REGIAO AS NOME_TABELA,
@@ -105,6 +109,50 @@ def calcular_margens_departamento(codigo_departamento, codigo_filial, regiao=Non
         "FILIAL": str(codigo_filial),
         "REGIAO": int(regiao) if regiao is not None else None,
     }, escopo, 'E.CODFILIAL', 'T.NUMREGIAO', '\n        )')
+
+
+def _calcular_com_regras(departamento, filial, regiao, escopo, regras):
+    from modulos.regras_margem import CompiladorSQL, expressao_regra
+    compilador = CompiladorSQL()
+    calculos = compilador.regras(regras)
+    contagens = ', '.join(f'SUM(CASE WHEN REGRA_FORMULA = {compilador.bind(regra["id"])} THEN 1 ELSE 0 END) AS REGRA_{i}'
+                         for i, regra in enumerate(regras))
+    params = {**compilador.parametros, 'DEPTO': int(departamento), 'FILIAL': str(filial),
+              'REGIAO': int(regiao) if regiao is not None else None}
+    sql = f'''WITH BASE AS (
+        SELECT T.NUMREGIAO, R.REGIAO AS NOME_TABELA, P.CODPROD, T.PVENDA, E.CUSTOULTENT,
+               {calculos['base']} AS BASE_FORMULA, {calculos['percentual']} AS PERCENTUAL_FORMULA,
+               {calculos['id']} AS REGRA_FORMULA
+        FROM PCPRODUT P
+        JOIN PCTABPR T ON T.CODPROD = P.CODPROD
+        JOIN PCREGIAO R ON R.NUMREGIAO = T.NUMREGIAO
+        JOIN PCEST E ON E.CODPROD = P.CODPROD
+        WHERE P.CODEPTO = :DEPTO AND E.CODFILIAL = :FILIAL AND P.DTEXCLUSAO IS NULL
+          AND R.STATUS = 'A' AND (:REGIAO IS NULL OR T.NUMREGIAO = :REGIAO)
+          {filtros_escopo(escopo, params, 'E.CODFILIAL', 'T.NUMREGIAO')}
+    )
+    SELECT NUMREGIAO, NOME_TABELA, COUNT(*) AS TOTAL_PRODUTOS,
+           SUM(CASE WHEN PVENDA > 0 AND CUSTOULTENT IS NOT NULL THEN 1 ELSE 0 END) AS PRODUTOS_VALIDOS,
+           SUM(CASE WHEN PVENDA IS NULL OR PVENDA <= 0 THEN 1 ELSE 0 END) AS SEM_PRECO,
+           SUM(CASE WHEN CUSTOULTENT IS NULL THEN 1 ELSE 0 END) AS SEM_CUSTO,
+           SUM(CASE WHEN CUSTOULTENT = 0 THEN 1 ELSE 0 END) AS CUSTO_ZERO,
+           SUM(CASE WHEN PVENDA > 0 AND CUSTOULTENT IS NOT NULL THEN PVENDA ELSE 0 END) AS TOTAL_PRECOS,
+           SUM(CASE WHEN PVENDA > 0 AND CUSTOULTENT IS NOT NULL THEN CUSTOULTENT ELSE 0 END) AS TOTAL_CUSTOS,
+           SUM(CASE WHEN BASE_FORMULA > 0 AND PERCENTUAL_FORMULA IS NOT NULL THEN BASE_FORMULA ELSE 0 END) AS BASE_FORMULAS,
+           SUM(CASE WHEN BASE_FORMULA > 0 AND PERCENTUAL_FORMULA IS NOT NULL THEN BASE_FORMULA * PERCENTUAL_FORMULA / 100 ELSE 0 END) AS GANHO_FORMULAS,
+           SUM(CASE WHEN BASE_FORMULA > 0 AND PERCENTUAL_FORMULA IS NOT NULL THEN 1 ELSE 0 END) AS PRODUTOS_FORMULAS,
+           {contagens}
+    FROM BASE GROUP BY NUMREGIAO, NOME_TABELA ORDER BY NUMREGIAO'''
+    linhas = executar_consulta(sql, params)
+    for linha in linhas:
+        base = Decimal(str(linha['base_formulas'] or 0))
+        ganho = Decimal(str(linha['ganho_formulas'] or 0))
+        linha['percentual_formula'] = ganho / base * 100 if base > 0 else None
+        linha['regras_aplicadas'] = [{'nome': regra['nome'], 'produtos': linha.pop(f'regra_{i}'),
+                                    'expressao': expressao_regra(regra)}
+                                   for i, regra in enumerate(regras) if linha.get(f'regra_{i}', 0)]
+        linha['formulas_ativas'] = True
+    return linhas
 
 
 def consultar_margens_departamento_produto(codprod, escopo=None):
@@ -145,7 +193,7 @@ def formatar_relatorio(departamento, filial, linhas, incluir_custos=True):
         preco = Decimal(str(item['total_precos'] or 0))
         custo = Decimal(str(item['total_custos'] or 0))
         diferenca = preco - custo
-        margem = ganho_sobre_custo(preco, custo)
+        margem = item.get('percentual_formula') if item.get('formulas_ativas') else ganho_sobre_custo(preco, custo)
         margem_txt = (f'{margem:.2f}'.replace('.', ',') + '%') if margem is not None else 'Indisponível'
         texto += renderizar_mensagem('departamento_tabela', regiao=item['numregiao'],
             tabela=item['nome_tabela'], precos=moeda(preco), lucro=margem_txt)
@@ -154,5 +202,10 @@ def formatar_relatorio(departamento, filial, linhas, incluir_custos=True):
                 validos=item['produtos_validos'] or 0, total=item['total_produtos'],
                 sem_preco=item['sem_preco'] or 0, sem_custo=item['sem_custo'] or 0, custo_zero=item['custo_zero'] or 0)
         texto += '\n'
+        if item.get('formulas_ativas'):
+            nomes = ', '.join(regra['nome'] for regra in item['regras_aplicadas']) or 'Padrão'
+            texto += f'🧮 Fórmulas: {nomes}\nPercentual ponderado pelo custo calculado de cada produto.\n'
+            if incluir_custos:
+                texto += f'Base das fórmulas: {moeda(item["base_formulas"])}\nGanho calculado pelas fórmulas: {moeda(item["ganho_formulas"])}\n'
     texto += renderizar_mensagem('departamento_rodape')
     return texto

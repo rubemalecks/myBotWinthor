@@ -266,6 +266,63 @@ def salvar_mensagens_personalizadas(alteracoes):
         _gravar_json(ARQUIVO_DADOS.with_name('mensagens.json'), mensagens)
 
 
+def obter_configuracao_campos_produto():
+    with _LOCK:
+        caminho = ARQUIVO_DADOS.with_name('campos_produto.json')
+        if not caminho.exists():
+            return []
+        try:
+            dados = json.loads(caminho.read_text(encoding='utf-8'))
+            if not isinstance(dados, dict) or set(dados) != {'campos'}:
+                raise ValueError('Formato inválido.')
+            return dados['campos']
+        except (OSError, ValueError) as erro:
+            raise RuntimeError('Não foi possível ler campos_produto.json.') from erro
+
+
+def salvar_configuracao_campos_produto(campos):
+    with _LOCK:
+        _gravar_json(ARQUIVO_DADOS.with_name('campos_produto.json'), {'campos': campos})
+
+
+def ler_regras_margem():
+    with _LOCK:
+        caminho = ARQUIVO_DADOS.with_name('formulas_margem.json')
+        if not caminho.exists():
+            return []
+        try:
+            dados = json.loads(caminho.read_text(encoding='utf-8'))
+            if not isinstance(dados, dict) or dados.get('versao') != 1 or not isinstance(dados.get('regras'), list):
+                raise ValueError('Formato inválido.')
+            return dados['regras']
+        except (OSError, ValueError) as erro:
+            raise RuntimeError('Não foi possível ler formulas_margem.json. Verifique o arquivo ou restaure um backup.') from erro
+
+
+def gravar_regra_margem(acao, regra=None, identificador=None):
+    with _LOCK:
+        regras = ler_regras_margem()
+        existente = next((item for item in regras if item.get('id') == identificador), None)
+        if acao in ('salvar', 'remover') and existente is None:
+            raise ValueError('Regra não encontrada.')
+        if acao != 'remover':
+            if any(item.get('nome', '').casefold() == regra['nome'].casefold() and item.get('id') != identificador for item in regras):
+                raise ValueError('Já existe uma regra com esse nome.')
+            if acao == 'criar':
+                if len(regras) >= 50:
+                    raise ValueError('O limite é de 50 regras.')
+                identificador = secrets.token_hex(12)
+                regras.append({'id': identificador, **regra})
+            elif acao == 'salvar':
+                existente.update(regra)
+            else:
+                raise ValueError('Ação inválida.')
+        else:
+            regras.remove(existente)
+        _gravar_json(ARQUIVO_DADOS.with_name('formulas_margem.json'), {'versao': 1, 'regras': regras})
+        return identificador
+
+
 def _migrar_permissoes_margem(dados):
     alterado = False
     for perfil in [*dados["usuarios"].values(), *dados.get("perfis_teste", {}).values()]:

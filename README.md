@@ -126,7 +126,9 @@ Para iniciar com o Windows, use **Inicialização automática do Windows**, na g
 
 ### Personalizar mensagens de retorno
 
-Na guia **Personalização**, escolha o tipo de mensagem, edite o texto e clique em **Salvar mensagem**. A prévia usa dados fictícios. Clique nas variáveis disponíveis para inseri-las, mantendo as chaves. Exemplo para **Produto → Identificação do produto**:
+Em **Personalização → Mensagens**, a prévia começa com dados fictícios. Para testar os blocos de identificação do produto com dados reais, informe um **CODPROD** e clique em **Consultar produto**. As variáveis adicionais, como `{volume}`, usam os valores salvos no Oracle; campos vazios aparecem como **Não informado**. A prévia administrativa inclui os campos configurados, e o bot continua respeitando as permissões do usuário. Clique em **Usar exemplo fictício** para voltar ao exemplo.
+
+Em **Personalização → Mensagens**, escolha o tipo de mensagem, edite o texto e clique em **Salvar mensagem**. Clique nas variáveis disponíveis para inseri-las ou digite uma coluna de PCPRODUT nos blocos de identificação do produto. Exemplo para **Produto → Identificação do produto**:
 
 ```text
 🛒 Minha empresa
@@ -139,6 +141,41 @@ Você pode ajustar os blocos de produto, preços, preço programado, custos/nota
 **A personalização altera o texto, não o cálculo nem as permissões.** Custos e preço programado só aparecem para quem tem acesso; suas variáveis não são aceitas nos blocos públicos de preço. Não digite credenciais nem dados confidenciais como texto fixo. Textos são enviados sem formatação Markdown/HTML; emojis e quebras de linha são aceitos. Cada modelo aceita até 2.500 caracteres.
 
 As alterações valem nas próximas consultas, **sem reiniciar o bot**. Para desfazer uma personalização, clique em **Restaurar padrão** e depois em **Salvar mensagem**. Os modelos ficam em `mensagens.json`, criado na pasta de dados no primeiro salvamento. Inclua esse arquivo no backup ou copie-o para outra instalação para reutilizar o mesmo padrão.
+
+### Campos de PCPRODUT direto na mensagem
+
+Em **Personalização → Mensagens**, digite o nome da coluna entre chaves no bloco **Produto → Identificação do produto** ou **Fórmula → Identificação do produto**. Não é necessário cadastrar campos em outra tela.
+
+```text
+Produto: {descricao}
+Código: {codprod}
+Embalagem: {embalagem}
+Código de barras: {codauxiliar}
+```
+
+1. Digite uma coluna válida de `PCPRODUT`, como `{EMBALAGEM}` ou `{embalagem}`. Maiúsculas e minúsculas são aceitas.
+2. Informe o CODPROD e clique em **Consultar produto**. O sistema valida a coluna no Oracle e mostra seu valor real, sem salvar a alteração. Valores nulos aparecem como **Não informado**.
+3. Clique em **Salvar mensagem**. As variáveis são normalizadas para minúsculas e os campos necessários ficam registrados automaticamente para as próximas consultas do bot.
+
+A prévia sem CODPROD continua fictícia. Colunas inexistentes, binárias/LOB, expressões SQL e variáveis de produto em outros blocos são rejeitadas. São aceitos até **20 campos adicionais**, de texto, número ou data. As permissões de busca e o filtro de produtos excluídos permanecem iguais.
+
+Campos públicos conhecidos, como EMBALAGEM e CODAUXILIAR, acompanham a permissão de consultar preço. Colunas sem classificação pública começam restritas à permissão de custos; classificações já salvas são preservadas. A prévia administrativa mostra o valor, mas o bot exibe **Sem permissão** quando necessário.
+
+`campos_produto.json` passa a ser um registro interno automático, preservado para compatibilidade com as mensagens existentes. Esse arquivo e `mensagens.json` ficam na pasta de dados da instalação, fora do Git, e devem acompanhar o backup. Alterações salvas valem nas próximas consultas, sem reiniciar.
+
+### Manutenção de fórmulas (exclusiva do painel)
+
+Abra **Personalização → Fórmulas**. Essa seção configura os cálculos apresentados no Telegram; o bot não permite editar regras.
+
+1. Informe um **CODPROD** e clique em **Simular cálculo** para ver os valores reais por filial e tabela.
+2. Adicione ajustes para somar/subtrair valores ou percentuais do **custo**, do **preço usado no cálculo** ou do **resultado**. No resultado, valor fixo significa pontos percentuais; percentual significa variação relativa. Exemplo: custo 10 e preço 20 resultam em 100%; somar 2 ao custo resulta em 66,67%.
+3. Para usar um parâmetro numérico, clique em **Carregar parâmetros das tabelas** e escolha uma coluna de `PCPRODUT`, `PCEST`, `PCTABPR` ou `PCREGIAO`. Clique em **Confirmar fórmula** para incluir a expressão na prévia; se houver CODPROD informado, a simulação é recalculada sem salvar.
+4. Dê um nome, vincule uma lista de CODPRODs e/ou um filtro, como `PCPRODUT.CODEPTO = 108 AND PCEST.CODFILIAL = 1`. Lista e filtro são combinados com AND. Para uma regra geral, marque **Todos os produtos** e deixe os dois vazios.
+5. Marque **Ativar nas consultas do bot** e salve. Sem ativar, a fórmula fica guardada para manutenção. Em sobreposição, vence a primeira regra ativa por prioridade crescente; empates seguem o identificador.
+
+A prévia mostra a fórmula atual e a simulada, inclusive quando o produto está fora do filtro. Simular não salva nem modifica o Oracle. Os ajustes alteram somente o cálculo de lucro: não mudam preços, custos cadastrados ou permissões. Custos ajustados nulos ou não positivos tornam o percentual indisponível. No departamento, os resultados por produto são ponderados pelo custo ajustado; não se faz uma média simples de percentuais.
+
+As regras ficam em **`formulas_margem.json` na pasta de dados da instalação**, fora do Git. Inclua o arquivo no backup e na mudança de máquina. Salvar, desativar ou remover uma regra vale nas próximas consultas, sem reiniciar. Sem regra aplicável, permanece `(preço − custo) ÷ custo × 100`.
 
 ## 4. Comandos do bot no Telegram
 
@@ -230,10 +267,14 @@ myBotWinthor-dados/           ← dados locais
 ├── config_bot.json          ← Telegram e opções do painel
 ├── config_oracle.json       ← conexão Oracle
 ├── dados_bot.json           ← usuários, permissões e hash da senha do painel
-└── mensagens.json           ← respostas personalizadas, criado ao salvar no painel
+├── mensagens.json           ← respostas personalizadas, criado ao salvar no painel
+├── campos_produto.json      ← campos registrados automaticamente pelas mensagens
+└── formulas_margem.json     ← regras e ajustes de fórmulas personalizados
 ```
 
 O nome padrão é o nome da pasta do projeto seguido de `-dados`. Confira o caminho em **Bot → Armazenamento**. `BOT_DATA_DIR` no `.env` permite escolher outro local.
+
+**Mensagens, campos e fórmulas são sempre salvos nessa mesma pasta de dados**, criada na inicialização. Seus arquivos de personalização são criados no primeiro salvamento. Se `BOT_DATA_DIR` estiver configurado, todos usam a pasta indicada. Inclua os três JSONs no backup; são dados de cada instalação e não são enviados ao Git.
 
 ### Fazer backup
 
@@ -242,7 +283,7 @@ O nome padrão é o nome da pasta do projeto seguido de `-dados`. Confira o cami
 1. Pare o bot e o serviço, se estiver ativo.
 2. Copie a **pasta de dados inteira** para um local seguro, por exemplo `C:\Backups\myBotWinthor\AAAA-MM-DD\`.
 3. Guarde também uma cópia do `.env`.
-4. Confira os JSONs na cópia, incluindo `mensagens.json` se houver personalizações, e inicie o projeto novamente.
+4. Confira os JSONs na cópia, incluindo `mensagens.json`, `campos_produto.json` e `formulas_margem.json` se houver personalizações, e inicie o projeto novamente.
 
 Os JSONs de configuração contêm token e senha Oracle. Não publique esses arquivos. Essa cópia **não substitui o backup do Oracle**.
 

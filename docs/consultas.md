@@ -194,4 +194,14 @@ Os modelos salvos são lidos de `mensagens.json`, na mesma pasta de `dados_bot.j
 
 Modelos aceitam texto simples, emojis, quebras de linha e variáveis nomeadas como `{descricao}`. Chaves literais devem ser duplicadas: `{{texto}}`. São rejeitados nomes desconhecidos, acesso por atributo/índice, conversões e especificadores de formato. O limite é de 2.500 caracteres por modelo. O preenchimento não executa código e não interpreta novamente os valores recebidos do banco.
 
-Os blocos continuam sendo montados após as verificações de permissão: `programado` exige `ver_preco_programado`; custos, notas, totais de custo e substituição numérica exigem `ver_custos`; lucro do produto exige `ver_margem_produto`; relatório/fórmula de departamento exige `ver_margem_departamento`. Cada bloco recebe somente suas variáveis permitidas. A personalização não altera SQL, escopos de filial/tabela nem a fórmula matemática.
+Os blocos continuam sendo montados após as verificações de permissão: `programado` exige `ver_preco_programado`; custos, notas, totais de custo e substituição numérica exigem `ver_custos`; lucro do produto exige `ver_margem_produto`; relatório/fórmula de departamento exige `ver_margem_departamento`. Cada bloco recebe somente suas variáveis permitidas. A personalização de texto não altera SQL, escopos de filial/tabela nem a fórmula matemática; a seleção de colunas adicionais é descrita a seguir.
+
+### Campos adicionais de PCPRODUT
+
+Nos blocos de identificação do produto, o administrador digita uma coluna de PCPRODUT entre chaves na mensagem. O sistema normaliza os nomes para minúsculas e valida colunas novas pelo catálogo Oracle: `listar_colunas_produto` executa `SELECT * FROM PCPRODUT WHERE 1=0` e lê somente os metadados. Aceita até 20 colunas adicionais de texto, número ou data; nomes compostos, expressões SQL, binários e LOB são rejeitados.
+
+`POST /api/message-templates/preview` pode receber CODPROD para consultar valores reais. A consulta usa parâmetros vinculados, somente as colunas validadas e `PCPRODUT.DTEXCLUSAO IS NULL`, inclusive para produtos sem preço. Testar não grava os campos. `PUT /api/message-templates` registra automaticamente os campos necessários em `campos_produto.json` e salva o texto em `mensagens.json`. As duas operações exigem sessão administrativa e CSRF.
+
+`consultar_produto` inclui as colunas salvas como `P.COLUNA AS EXTRA_N` e organiza os valores em `campos_personalizados`. O bot respeita a classificação pública ou restrita a custos; colunas sem classificação conhecida começam restritas a custos. A prévia administrativa pode mostrar todos os valores, mas isso não libera acesso ao usuário Telegram. As permissões existentes são preservadas.
+
+As rotas `/api/product-fields` permanecem para compatibilidade; não há subaba de cadastro manual de campos. Os arquivos de mensagens, campos e fórmulas ficam na pasta de dados, fora do Git.
