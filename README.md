@@ -4,6 +4,8 @@
 
 Consulte produtos, preços, custos e margens do WinThor pelo Telegram. Use o painel web para configurar o sistema e controlar o acesso de cada usuário.
 
+Para agentes e desenvolvedores: [resumo da arquitetura, regras e comandos de teste](AGENTS.md).
+
 ## Acesso rápido no Windows
 
 Depois da instalação, use os arquivos BAT com dois cliques, sem ativar o ambiente virtual manualmente:
