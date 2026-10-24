@@ -286,22 +286,7 @@ PAGINA = """<!doctype html>
         <button type="submit">Alterar senha</button>
       </form>
     </details>
-    <section id="windows-service" class="card" hidden>
-      <h2>Inicialização automática do Windows</h2>
-      <p id="windows-service-status" class="muted"></p>
-      <p class="muted">
-        O serviço roda como LocalSystem. Confirme o aviso administrativo na máquina
-        que hospeda a API. A ativação inicia o bot no próximo boot; não inicie o
-        serviço enquanto uma instância manual de bot.py estiver rodando.
-      </p>
-      <button id="enable-windows-service" type="button">Ativar inicialização automática</button>
-      <button id="disable-windows-service" class="secondary" type="button" hidden>
-        Desativar serviço
-      </button>
-      <button id="remove-windows-service" class="secondary" type="button" hidden>
-        Remover serviço
-      </button>
-    </section>
+
     </div>
     <div id="panel-oracle" role="tabpanel" aria-labelledby="tab-oracle" tabindex="0" hidden>
       <section class="card"><h2>Servidor Oracle / WinThor</h2>
@@ -1057,57 +1042,6 @@ PAGINA = """<!doctype html>
         configuracaoAtual.TELEGRAM_BOT_TOKEN_configured ? "Token salvo" : "Ainda não configurado";
       document.querySelector("#oracle-password").placeholder =
         configuracaoAtual.ORACLE_PASSWORD_configured ? "Senha salva" : "Ainda não configurada";
-      await carregarServicoWindows();
-    }
-
-    async function carregarServicoWindows() {
-      const response = await request("/api/windows-service");
-      const section = document.querySelector("#windows-service");
-      section.hidden = !response.available;
-      if (!response.available) return;
-
-      const status = document.querySelector("#windows-service-status");
-      const enable = document.querySelector("#enable-windows-service");
-      const disable = document.querySelector("#disable-windows-service");
-      const remove = document.querySelector("#remove-windows-service");
-      if (response.installed && response.binary_exists === false) {
-        status.textContent = "O executável registrado no serviço não existe. Clique em Reparar e confirme a solicitação administrativa.";
-        enable.hidden = false;
-        enable.textContent = "Reparar inicialização automática";
-        disable.hidden = true;
-        remove.hidden = false;
-      } else if (!response.installed) {
-        status.textContent = "Serviço ainda não instalado.";
-        enable.hidden = false;
-        enable.textContent = "Ativar inicialização automática";
-        disable.hidden = true;
-        remove.hidden = true;
-      } else if (response.automatic) {
-        status.textContent = `Serviço instalado · ${response.state} · inicialização automática ativa.`;
-        enable.hidden = true;
-        disable.hidden = false;
-        remove.hidden = false;
-      } else {
-        status.textContent = `Serviço instalado · ${response.state} · inicialização automática desativada.`;
-        enable.hidden = false;
-        enable.textContent = "Ativar inicialização automática";
-        disable.hidden = true;
-        remove.hidden = false;
-      }
-    }
-
-    async function executarAcaoServicoWindows(action) {
-      if (action === "remove" &&
-          !window.confirm("Confirma parar e remover o serviço do Windows?")) return;
-      try {
-        const result = await request(`/api/windows-service/${action}`, {
-          method: "POST", body: "{}"
-        });
-        notificarTemporariamente(result.message);
-        window.setTimeout(() => {
-          carregarServicoWindows().catch(error => { notificarTemporariamente(error.message, 10000); });
-        }, 1500);
-      } catch (error) { notificarTemporariamente(error.message, 10000); }
     }
 
     async function abrirPainel() {
@@ -1252,15 +1186,7 @@ PAGINA = """<!doctype html>
 
     }
 
-    document.querySelector("#enable-windows-service").addEventListener("click", () => {
-      executarAcaoServicoWindows("install");
-    });
-    document.querySelector("#disable-windows-service").addEventListener("click", () => {
-      executarAcaoServicoWindows("disable");
-    });
-    document.querySelector("#remove-windows-service").addEventListener("click", () => {
-      executarAcaoServicoWindows("remove");
-    });
+
 
     abrirPainel();
   </script>

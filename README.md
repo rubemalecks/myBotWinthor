@@ -14,7 +14,7 @@ Depois da instalação, use os arquivos BAT com dois cliques, sem ativar o ambie
 |---|---|
 | **[configurar.bat](configurar.bat)** | Configurar o Oracle e a porta da API. Ao sair, oferece iniciar a aplicação e abrir o painel. |
 | **[iniciar.bat](iniciar.bat)** | Iniciar o bot/API e perguntar se deseja abrir o painel no navegador. |
-| **[monitor.bat](monitor.bat)** | Acompanhar em tempo real as consultas, requisições HTTP e erros da aplicação executada como serviço Windows. |
+| **[monitor.bat](monitor.bat)** | Ler um arquivo de log existente; na execução direta, acompanhe as consultas no terminal do bot. |
 | **[myBotWinthor.bat](myBotWinthor.bat)** | Mostrar apenas o banner da aplicação; não inicia nem configura o sistema. |
 
 **Primeiro uso:** instale as dependências abaixo → abra `configurar.bat` → inicie a aplicação → configure o Telegram pelo painel.
@@ -32,7 +32,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Copie `.env.example` e renomeie a cópia para **`.env`**. Se já existir, mantenha seu arquivo.
+O **`.env` é opcional**: configure o Oracle pelo BAT ou painel e o Telegram pelo painel. Se preferir valores iniciais por arquivo, copie `.env.example` para **`.env`**; se ele já existir, mantenha seu arquivo. As configurações salvas ficam na pasta de dados da instalação.
 
 Se usar o Oracle Instant Client, coloque as DLLs diretamente na pasta **`oracle_client`**, dentro do projeto. A API detecta essa pasta automaticamente; sem ela, tenta conectar no modo Thin.
 
@@ -40,34 +40,15 @@ Se usar o Oracle Instant Client, coloque as DLLs diretamente na pasta **`oracle_
 
 **No Windows, abra `iniciar.bat` com dois cliques.** Ele pergunta se deseja abrir o painel no navegador. Responda `S` para abrir ou `N`/Enter para iniciar sem abrir o navegador. O bot/API inicia nos dois casos.
 
-Se o serviço Windows estiver instalado, ele será utilizado; caso contrário, a execução permanece no terminal, que deve ficar aberto. O navegador só abre depois de o painel responder. Se a API já estiver ativa, nenhuma nova instância será criada.
+O BAT executa o Python da `.venv` com `bot.py`, mantendo a execução no terminal. Não instala nem inicia serviço Windows. O navegador abre somente quando o painel responde; se a API já estiver ativa, não cria outra instância.
 
-O `iniciar.bat` abre um terminal próprio para a execução. Na execução manual, **Ctrl+C** solicita o encerramento e mostra uma mensagem de finalização, sem traceback de `KeyboardInterrupt`. O iniciador aguarda o processo terminar antes de fechar. Se a API estiver rodando como serviço Windows, pare-a pelo gerenciamento de serviços; fechar o iniciador não para o serviço.
+Mantenha o terminal aberto. Para encerrar, pressione **Ctrl+C**; o iniciador aguarda o processo finalizar.
 
-Se o serviço apresentar **Erro 2 / arquivo não encontrado**, ele pode apontar para uma `.venv` antiga ou para um `pythonservice.exe` ausente. Abra o PowerShell **como administrador**, entre na pasta atual do projeto e execute:
+**Instalações antigas:** se houver um serviço `MyBotWinthorBot` instalado, pare-o e desative-o em `services.msc` antes de adotar a execução pelo terminal. Isso evita que ele volte a iniciar com o Windows e duplique o polling Telegram. O novo BAT não altera serviços existentes automaticamente.
 
-```powershell
-.\.venv\Scripts\python.exe service_helper.py install
-.\iniciar.bat
-```
+### Acompanhar as consultas
 
-Esse comando instala ou atualiza o registro do serviço com o ambiente atual. O painel também oferece **Reparar inicialização automática** quando detecta o executável ausente. O iniciador informa o código real de falhas do Windows e não inicia outra instância manual quando o serviço instalado falha.
-
-### Monitorar consultas com o serviço ativo
-
-Abra **`monitor.bat`** para ver as últimas **50 linhas** de `bot-service.log` e acompanhar as novas entradas em tempo real. As linhas **CONSULTA** identificam quem consultou (nome, ID e username do Telegram), o tipo/código/termo pesquisado, a etapa, a quantidade de registros, a duração e eventuais erros. As requisições HTTP do painel/API também aparecem no log.
-
-O monitor pode ser aberto antes do serviço: ele aguarda o arquivo aparecer. **Fechar a janela ou pressionar Ctrl+C encerra somente o monitor**, sem parar o serviço. Ele apenas lê o arquivo e não inicia outra instância do bot. A execução manual de `bot.py` continua mostrando seus logs no próprio terminal.
-
-Pelo PowerShell, você pode ajustar a visualização:
-
-```powershell
-.\monitor.bat --linhas 200
-.\monitor.bat --somente-consultas
-.\monitor.bat --linhas 0
-```
-
-`--linhas 0` acompanha apenas as novas entradas. O arquivo `bot-service.log` fica na pasta do projeto e está excluído do Git. Após atualizar uma instalação que já está rodando como serviço, reinicie o serviço para aplicar a saída UTF-8 em tempo real.
+Na execução direta, consultas, requisições e erros aparecem no próprio terminal do bot. `monitor.bat` permanece disponível para ler um arquivo de log existente, como `bot-service.log` de uma instalação antiga. A execução direta não redireciona automaticamente a saída para esse arquivo.
 
 ### Alternativa pelo terminal
 
@@ -89,7 +70,7 @@ Para ativar o ambiente no PowerShell, se preferir, use `.\.venv\Scripts\Activate
 
 ### Configurar pelo arquivo BAT
 
-Com o projeto e o serviço Windows **parados**, abra **`configurar.bat`** com dois cliques. O menu permite:
+Com o projeto **parado**, abra **`configurar.bat`** com dois cliques. O menu permite:
 
 - **Configurar banco Oracle:** servidor, porta Oracle, service name, usuário e senha oculta. Enter mantém o valor atual; ao final, você pode salvar e testar a consulta de produtos.
 - **Configurar porta da API:** escolha a porta HTTP do painel/API, entre 1 e 65535. A porta padrão é `8765`; a porta do Oracle é uma configuração diferente.
@@ -100,7 +81,7 @@ Ao escolher a porta no BAT e ao iniciar a API, o terminal mostra o endereço loc
 
 Se o ambiente virtual ainda não existir, o BAT mostra os comandos de instalação. Você também pode abrir o assistente pelo terminal: `.\.venv\Scripts\python.exe -m modulos.configurar`.
 
-Ao escolher **0 — Sair**, o configurador pergunta se deseja iniciar o serviço/bot e abrir o painel no navegador. Se o serviço Windows estiver instalado, tenta iniciá-lo; caso contrário, executa o bot/API no terminal. O navegador abre apenas depois de o painel responder. Uma instância já em execução é reutilizada. Na execução manual, mantenha o terminal aberto; para parar, use **Ctrl+C**. O serviço Windows pode exigir que o BAT seja executado como administrador.
+Ao escolher **0 — Sair**, o configurador pergunta se deseja iniciar o bot/API no terminal e abrir o painel. O navegador abre depois de o painel responder. Não é necessário instalar serviço nem executar o BAT como administrador. Mantenha o terminal aberto e use **Ctrl+C** para parar.
 
 ### Configuração pelo navegador
 
@@ -110,7 +91,7 @@ Ao escolher **0 — Sair**, o configurador pergunta se deseja iniciar o serviço
 | **Servidor Oracle** | Informe host, porta, service name, usuário e senha. Clique em **SALVAR E TESTAR ORACLE**. |
 | **Perfis e permissões** | Cadastre ou aprove usuários e escolha o que cada um pode consultar. |
 | **Modelos de perfil** | Edite Funcionário e Cliente ou cadastre novas predefinições de permissões. |
-| **Personalização** | Configure o texto das respostas do bot, com variáveis e prévia da mensagem. |
+| **Personalização** | Use as subabas **Mensagens** e **Fórmulas** para configurar os retornos, campos e cálculos, com prévia. |
 
 **Depois de salvar ou alterar o token, pare e inicie o projeto novamente.** Token e senha Oracle vazios mantêm os valores salvos.
 
@@ -124,7 +105,7 @@ Confirmações do painel desaparecem após 2,5 segundos. Erros e resultados deta
 
 O host/IP e o usuário do Oracle ficam ocultos após salvar e ao carregar valores já configurados. Use **Mostrar/Ocultar** ao lado de cada campo para visualizar ou editar os dados.
 
-Para iniciar com o Windows, use **Inicialização automática do Windows**, na guia Bot. Não execute outra instância manual enquanto o serviço estiver ativo.
+A execução é pelo terminal, com `iniciar.bat` ou `.\.venv\Scripts\python.exe bot.py`. A opção de instalar serviço foi retirada do painel.
 
 ### Personalizar mensagens de retorno
 
@@ -333,4 +314,4 @@ oracle_client/         ← bibliotecas Oracle, quando utilizadas
 Os arquivos Python da raiz são pontos de entrada; a implementação fica em `modulos/`. O comando de execução continua sendo `python bot.py`. O `.env` permanece na raiz, e a pasta de dados continua separada do código.
 
 - [Consultas e cálculos](docs/consultas.md): tabelas, campos, JOINs, filtros, fórmulas de margem e testes de conexão.
-- [Manual de operação](docs/operacao.md): configuração avançada, serviço Windows, backup com PowerShell e migração passo a passo.
+- [Manual de operação](docs/operacao.md): configuração avançada, execução pelo terminal, backup com PowerShell e migração passo a passo.

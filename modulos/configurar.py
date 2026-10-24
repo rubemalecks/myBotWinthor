@@ -119,7 +119,7 @@ def configurar_porta_api():
 
 def main():
     print('myBotWinthor — Configuração local')
-    print('Pare o bot, o painel e o serviço Windows antes de alterar os arquivos.')
+    print('Pare o bot e o painel antes de alterar os arquivos.')
     print('Este assistente usa os mesmos dados do painel. Senhas não são exibidas.')
     try:
         atual = obter_configuracao()
@@ -139,7 +139,7 @@ def main():
                 configurar_porta_api()
             else:
                 print('Opção inválida.')
-        if confirmar('Deseja iniciar o serviço/bot e abrir o painel no navegador agora?'):
+        if confirmar('Deseja iniciar o bot e a API neste terminal e abrir o painel agora?'):
             return iniciar_e_abrir_painel()
         print('Para iniciar depois: .venv\\Scripts\\python.exe bot.py')
         return 0

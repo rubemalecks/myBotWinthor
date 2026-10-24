@@ -1,4 +1,4 @@
-"""Inicia o serviço ou a execução manual e abre o painel quando disponível."""
+"""Executa bot.py no terminal e abre o painel quando disponível."""
 import json
 import subprocess
 import sys
@@ -9,7 +9,6 @@ from urllib.request import ProxyHandler, build_opener
 
 from modulos.permissoes import BASE_DIR, obter_configuracao
 from modulos.rede import enderecos_painel
-from modulos.servico_windows import SERVICE_NAME, obter_status_servico
 from modulos.banner import mostrar_banner
 
 
@@ -20,20 +19,6 @@ def painel_disponivel(url):
             return resposta.status == 200 and json.loads(resposta.read(4096)).get('status') == 'ok'
     except (OSError, URLError, ValueError, AttributeError):
         return False
-
-
-def _iniciar_servico_windows():
-    import win32serviceutil
-    win32serviceutil.StartService(SERVICE_NAME)
-
-
-def orientar_reparo_servico(caminho=None):
-    if caminho:
-        print(f'Arquivo do serviço não encontrado: {caminho}')
-    print('O registro do serviço precisa ser reparado usando o ambiente atual do projeto.')
-    print('Abra o PowerShell como administrador na pasta do projeto e execute:')
-    print('  .\\.venv\\Scripts\\python.exe service_helper.py install')
-    print('Depois, execute iniciar.bat novamente.')
 
 
 def aguardar_processo(processo):
@@ -61,32 +46,10 @@ def iniciar_e_abrir_painel(abrir_navegador=True):
         print('O painel já está em execução; nenhuma nova instância será iniciada.')
     else:
         try:
-            servico = obter_status_servico()
-            if servico.get('installed'):
-                if servico.get('binary_exists') is False:
-                    orientar_reparo_servico(servico.get('binary_path'))
-                    return 1
-                if servico.get('state') not in ('running', 'starting', 'start_pending'):
-                    print('Iniciando o serviço Windows...')
-                    _iniciar_servico_windows()
-                else:
-                    print('O serviço já está iniciado; aguardando o painel...')
-            else:
-                print('Serviço Windows não instalado. Iniciando bot e API neste terminal...')
-                processo = subprocess.Popen([sys.executable, str(BASE_DIR / 'bot.py')], cwd=BASE_DIR)
-        except Exception as erro:
-            codigo = getattr(erro, 'winerror', None)
-            detalhe = getattr(erro, 'strerror', None)
-            print(f'Não foi possível iniciar: erro Windows {codigo} — {detalhe or type(erro).__name__}.'
-                  if codigo is not None else f'Não foi possível iniciar ({type(erro).__name__}). Confira o serviço e as configurações.')
-            if codigo in (2, 3):
-                orientar_reparo_servico()
-            elif codigo == 5:
-                print('Acesso negado. Execute iniciar.bat como administrador para iniciar o serviço.')
-            elif codigo == 1058:
-                print('O serviço está desativado. Ative a inicialização automática na guia Bot do painel ou reinstale o serviço.')
-            elif codigo is not None:
-                print('Confira a configuração do serviço e os eventos do Windows para esse código de erro.')
+            print('Iniciando bot e API neste terminal...')
+            processo = subprocess.Popen([sys.executable, str(BASE_DIR / 'bot.py')], cwd=BASE_DIR)
+        except OSError as erro:
+            print(f'Falha ao executar bot.py ({type(erro).__name__}). Confira o ambiente virtual e a pasta do projeto.')
             return 1
         limite = time.monotonic() + 30
         while time.monotonic() < limite:
@@ -97,7 +60,7 @@ def iniciar_e_abrir_painel(abrir_navegador=True):
                 break
             time.sleep(0.5)
         else:
-            print(f'O painel ainda não respondeu. Confira o terminal/log do serviço e tente acessar {url}')
+            print(f'O painel ainda não respondeu. Confira este terminal e tente acessar {url}')
             if processo is not None:
                 print('A execução manual continua neste terminal. Use Ctrl+C para parar.')
                 return aguardar_processo(processo)

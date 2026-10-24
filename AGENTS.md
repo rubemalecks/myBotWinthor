@@ -4,18 +4,18 @@
 
 myBotWinthor consulta produtos no Oracle/WinThor por meio de um bot Telegram. O painel web administra configuração, usuários, modelos de permissões, mensagens e fórmulas. A interface e as respostas são em português do Brasil. O ambiente principal de execução é Windows.
 
-Leia primeiro [README.md](README.md). Para entender SQL e campos, consulte [docs/consultas.md](docs/consultas.md); para instalação, serviço e backup, [docs/operacao.md](docs/operacao.md). Confira o código antes de alterar uma regra descrita aqui.
+Leia primeiro [README.md](README.md). Para entender SQL e campos, consulte [docs/consultas.md](docs/consultas.md); para instalação, execução pelo terminal e backup, [docs/operacao.md](docs/operacao.md). Confira o código antes de alterar uma regra descrita aqui.
 
 ## Execução e verificação
 
 - `configurar.bat`: configuração interativa.
 - `iniciar.bat`: inicia API/painel e bot, com opção de abrir o navegador.
-- `monitor.bat`: acompanha os registros da aplicação, inclusive na execução como serviço.
+- `monitor.bat`: acompanha um arquivo de log existente; na execução direta, os logs aparecem no terminal do bot.
 - Execução direta, na raiz: `.\.venv\Scripts\python.exe bot.py`.
 - Testes sem Oracle ou Telegram reais: `.\.venv\Scripts\python.exe -m unittest discover -s tests`.
 - Dependências: `requirements.txt`. Use o ambiente virtual do projeto.
 
-Iniciar a aplicação pode ativar o polling Telegram real. Evite instâncias concorrentes usando o mesmo token. Não inicie o serviço do Windows para executar testes.
+O iniciador executa `bot.py` diretamente pelo Python da `.venv`; não instala nem inicia serviço Windows. A instalação de serviço foi retirada da interface. Os módulos antigos permanecem para compatibilidade com instalações anteriores; não os use no fluxo normal. Antes de migrar uma máquina antiga, pare e desative seu serviço para evitar instâncias duplicadas. Iniciar a aplicação pode ativar o polling Telegram real. Evite instâncias concorrentes usando o mesmo token.
 
 ## Mapa do código
 
