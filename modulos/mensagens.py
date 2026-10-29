@@ -94,6 +94,9 @@ MODELOS = {
 
 def exemplos_modelo(chave):
     exemplos = dict(MODELOS[chave]['exemplo'])
+    if chave == 'custos':
+        from modulos.campos_custos import exemplos_custos
+        exemplos.update(exemplos_custos())
     if chave in ('produto', 'formula_produto'):
         exemplos.update(exemplos_campos_produto())
     return exemplos
@@ -120,6 +123,9 @@ def validar_modelo(chave, texto, campos=None):
     if not isinstance(texto, str) or not texto.strip() or len(texto) > LIMITE_MODELO:
         raise ValueError(f'O texto deve ter de 1 a {LIMITE_MODELO} caracteres.')
     exemplos = exemplos_modelo(chave)
+    if chave == 'custos':
+        from modulos.campos_custos import variaveis_custos
+        exemplos.update({v: 'EXEMPLO' for v in variaveis_custos(texto)})
     if campos is not None and chave in ('produto', 'formula_produto'):
         exemplos.update({campo['coluna'].lower(): 'EXEMPLO' for campo in campos})
     try:
@@ -149,6 +155,9 @@ def salvar_modelos(alteracoes):
 
 def previa_modelo(chave, texto, valores=None, campos=None):
     contexto = exemplos_modelo(chave) if chave in MODELOS else {}
+    if chave == 'custos':
+        from modulos.campos_custos import variaveis_custos
+        contexto.update({v: 'EXEMPLO' for v in variaveis_custos(texto)})
     if campos is not None and chave in ('produto', 'formula_produto'):
         for campo in campos:
             contexto.setdefault(campo['coluna'].lower(), 'EXEMPLO')
@@ -166,5 +175,9 @@ def renderizar_mensagem(chave, /, **valores):
         logger.warning('Modelo de mensagem inválido ou indisponível: %s. Usando padrão.', chave)
         texto = modelo['padrao']
     # Somente as variáveis deste bloco entram no contexto. Nunca avalia expressões.
-    contexto = {campo: str(valores.get(campo, 'Não informado')) for campo in exemplos_modelo(chave)}
+    exemplos = exemplos_modelo(chave)
+    if chave == 'custos':
+        from modulos.campos_custos import variaveis_custos
+        exemplos.update({v: 'EXEMPLO' for v in variaveis_custos(texto)})
+    contexto = {campo: str(valores.get(campo, 'Não informado')) for campo in exemplos}
     return texto.format_map(contexto)

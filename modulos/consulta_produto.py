@@ -1,39 +1,17 @@
+"""Consulta manual usando as mesmas proteções de acesso ao Oracle do aplicativo."""
+from modulos.database import executar_consulta
 
-import os
-from pathlib import Path
 
-import oracledb
-from dotenv import load_dotenv
+def consultar_identificacao(codigo):
+    codigo = str(codigo)
+    if not codigo.isascii() or not codigo.isdecimal() or not 0 < int(codigo) < 10**15:
+        raise ValueError('Informe um CODPROD positivo.')
+    return executar_consulta("""SELECT CODPROD, DESCRICAO, CODAUXILIAR
+        FROM PCPRODUT WHERE CODPROD = :codigo AND DTEXCLUSAO IS NULL""", {'codigo': int(codigo)})
 
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-oracledb.init_oracle_client(
-    lib_dir=str(Path(__file__).resolve().parent.parent / "oracle_client")
-)
-
-with oracledb.connect(
-    user=os.getenv("ORACLE_USER"),
-    password=os.getenv("ORACLE_PASSWORD"),
-    host=os.getenv("ORACLE_HOST"),
-    port=int(os.getenv("ORACLE_PORT", "1521")),
-    service_name=os.getenv("ORACLE_SERVICE"),
-) as conexao:
-
-    with conexao.cursor() as cursor:
-        cursor.execute("""
-            SELECT
-                CODPROD,
-                DESCRICAO,
-                CODAUXILIAR
-            FROM PCPRODUT
-            WHERE CODPROD = :codigo
-        """, codigo=2941)
-
-        produto = cursor.fetchone()
-
-        if produto:
-            print("Código:", produto[0])
-            print("Descrição:", produto[1])
-            print("Código de barras:", produto[2])
-        else:
-            print("Produto não encontrado.")
+if __name__ == '__main__':
+    for produto in consultar_identificacao(input('CODPROD: ').strip()):
+        print('Código:', produto['codprod'])
+        print('Descrição:', produto['descricao'])
+        print('Código de barras:', produto['codauxiliar'])

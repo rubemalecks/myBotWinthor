@@ -25,7 +25,7 @@ Os arquivos Python da raiz são pontos de entrada; a implementação fica em `mo
 |---|---|
 | `modulos/bot.py` | Inicialização, comandos e handlers Telegram, consultas e montagem das respostas. |
 | `modulos/database.py` | Conexão Oracle, consultas por código/nome, custos, catálogos e prévias reais. |
-| `modulos/consulta_produto.py` | Apoio ao fluxo de escolha de produto, filial e tabela. |
+| `modulos/consulta_produto.py` | Exemplo de consulta manual pelo executor protegido; sem conexão no import. |
 | `modulos/leitor_barras.py` | Leitura de códigos em imagens. |
 | `modulos/permissoes.py` | Persistência JSON, configuração, usuários, modelos de perfil e autenticação do painel. |
 | `modulos/escopo.py` | Restrições de filiais e regiões/tabelas de preço. |
@@ -43,7 +43,7 @@ Os arquivos Python da raiz são pontos de entrada; a implementação fica em `mo
 
 ## Dados de cada instalação
 
-Por padrão, a pasta persistente é `<nome-do-projeto>-dados`, ao lado do projeto. `BOT_DATA_DIR` substitui esse caminho; se relativo, é resolvido a partir da raiz do projeto. `modulos/permissoes.py` define `DIRETORIO_DADOS` e `ARQUIVO_DADOS`.
+Na execução pelo código, a pasta persistente padrão é `<nome-do-projeto>-dados`, ao lado do projeto. `BOT_DATA_DIR` substitui esse caminho; se relativo, é resolvido a partir da raiz do projeto. `modulos/permissoes.py` define `DIRETORIO_DADOS` e `ARQUIVO_DADOS`.
 
 - `dados_bot.json`: usuários, permissões, modelos de perfil e autenticação do painel.
 - `config_bot.json`: configuração Telegram e opções do painel.
@@ -83,3 +83,9 @@ Fórmulas são mantidas exclusivamente no painel. Ajustes podem afetar preço, c
 Mantenha os pontos de entrada pequenos. Ao editar JavaScript embutido, confira também a string efetivamente renderizada por Python e a sintaxe do script. Subabas precisam ter seletores próprios para não interferir na navegação principal.
 
 Execute testes pertinentes em `tests/`; use mocks ou SQLite para validar regras e SQL sem acessar produção. Mudanças em permissões, cálculos ou persistência precisam de regressões relevantes. Atualize README e documentação de consultas/operação conforme a mudança. Não registre valores sensíveis nos logs nem em saídas de diagnóstico.
+
+## Executáveis e organização de entrega
+
+Leia `docs/desenvolvimento.md` antes de alterar o empacotamento. `desktop/` contém gerenciador, instalador e build; `requirements-build.txt` separa a ferramenta PyInstaller das dependências de execução. `gerar_distribuicao.bat` publica `distribuicao/cliente`, `distribuicao/portatil` e seus ZIPs completos; `.build/` guarda intermediários e a distribuição anterior. Não mescle runtimes de versões diferentes nem inclua dados, credenciais ou desktop.json nos pacotes. As duas pastas geradas são ignoradas pelo Git.
+
+No modo EXE, dados novos ficam em `%LOCALAPPDATA%/myBotWinthor/dados`. No uso pelo código, continua valendo o padrão `<projeto>-dados` ou BOT_DATA_DIR. O instalador pode reutilizar diretamente uma pasta de dados antiga escolhida pelo usuário; não a mova nem limpe durante builds/atualizações. O controle gráfico supervisiona um processo, não instala serviço Windows.

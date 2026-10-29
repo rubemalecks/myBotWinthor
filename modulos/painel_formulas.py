@@ -140,9 +140,15 @@ HTML_FORMULAS = '''
     <label for="formula-priority">Prioridade<input type="number" id="formula-priority" min="0" max="10000" value="100" required><small class="formula-help">Menor número tem preferência.</small></label></div>
     <label class="formula-check"><input type="checkbox" id="formula-active">Ativar nas consultas do bot após salvar</label></section>
     <section class="formula-step"><div class="formula-step-heading"><span class="formula-step-number">2</span><div><h3>Monte os ajustes</h3><p class="formula-help">Ajuste o custo ou preço antes do cálculo, ou o percentual resultante.</p></div></div>
+    <div class="formula-base">
+      <label for="formula-cost-search">Buscar campo base do custo (origem fixa: PCEST)<input id="formula-cost-search" type="search" placeholder="Ex.: CUSTOREAL, CUSTOFIN"></label>
+      <label for="formula-cost-field">Campo usado antes dos ajustes<select id="formula-cost-field"><option value="PCEST.CUSTOULTENT">CUSTOULTENT — padrão</option></select></label>
+      <p id="formula-cost-help" class="formula-help">O custo escolhido será usado na subtração e no divisor. Os ajustes de custo serão aplicados sobre ele.</p>
+      <p class="formula-help">Somente colunas numéricas de PCEST. A escolha é própria desta fórmula e não altera o campo exibido na mensagem de custos.</p>
+    </div>
     <div id="formula-adjustments"></div>
     <div class="formula-empty">Nenhum ajuste adicionado. A fórmula usa o cálculo padrão.</div>
-    <div class="formula-actions"><button type="button" id="formula-add" class="secondary">+ Adicionar ajuste</button><button type="button" id="formula-catalog" class="secondary">Carregar parâmetros das tabelas</button><button type="button" id="formula-confirm">Confirmar fórmula</button></div>
+    <div class="formula-actions"><button type="button" id="formula-add" class="secondary">+ Adicionar ajuste</button><button type="button" id="formula-catalog" class="secondary">Atualizar campos disponíveis</button><button type="button" id="formula-confirm">Confirmar fórmula</button></div>
     <p class="formula-help">Confirme os ajustes para atualizar a fórmula abaixo. Se houver um CODPROD informado, a simulação será recalculada. Para aplicar no bot, use Salvar fórmula ao final.</p>
     <p id="formula-catalog-status" class="formula-help" role="status"></p>
     </section>
@@ -174,6 +180,34 @@ JS_FORMULAS = r'''
       for (const [value, label] of options) { const o = document.createElement('option'); o.value=value; o.textContent=label; select.append(o); }
       select.value = selected;
     }
+    // FORMULA_COST_FIELDS_START
+    function formulaCostOptions(campos, busca, selecionado) {
+      const termo = busca.trim().toUpperCase();
+      const opcoes = campos.filter(c => c.numerico && /^PCEST\.[A-Z][A-Z0-9_]*$/.test(c.campo))
+        .map(c => [c.campo, c.campo.slice(6)]);
+      if (!opcoes.some(c => c[0] === 'PCEST.CUSTOULTENT')) opcoes.unshift(['PCEST.CUSTOULTENT', 'CUSTOULTENT — padrão']);
+      return opcoes.filter(c => c[0] === selecionado || c[1].includes(termo));
+    }
+    // FORMULA_COST_FIELDS_END
+    let formulaCostSelected = 'PCEST.CUSTOULTENT';
+    function formulaRefreshCost() {
+      const opcoes = formulaCostOptions(formulaFields, fe('cost-search').value, formulaCostSelected);
+      if (!opcoes.some(c => c[0] === formulaCostSelected)) opcoes.push([formulaCostSelected, formulaCostSelected.slice(6) + ' — verificar disponibilidade']);
+      formulaOptions(fe('cost-field'), opcoes, formulaCostSelected);
+      fe('cost-help').textContent = `Custo base: ${formulaCostSelected}. Usado antes dos ajustes, na subtração e no divisor.`;
+    }
+    fe('cost-search').addEventListener('input', formulaRefreshCost);
+    fe('cost-field').addEventListener('change', () => { formulaCostSelected = fe('cost-field').value; formulaRefreshCost(); });
+    async function formulaCatalogLoad() {
+      fe('catalog').disabled=true;
+      try {
+        fe('catalog-status').textContent='Carregando campos disponíveis…';
+        formulaFields=(await request('/api/formulas/catalog')).campos;
+        [...fe('adjustments').children].forEach(r=>r.refresh()); formulaRefreshCost();
+        fe('catalog-status').textContent=`${formulaFields.filter(f=>f.numerico).length} colunas numéricas disponíveis. A origem do custo base permanece PCEST.`;
+      } catch(e) { fe('catalog-status').textContent=e.message; }
+      finally { fe('catalog').disabled=false; }
+    }
     function formulaAdjustment(data = {alvo:'custo',operacao:'+',tipo:'valor',valor:'0'}) {
       const row=document.createElement('div'); row.className='formula-adjustment';
       const header=document.createElement('div'); header.className='formula-adjustment-header';
@@ -185,14 +219,15 @@ JS_FORMULAS = r'''
       const type=make('Tipo',[['valor','Valor fixo / pontos percentuais'],['percentual','Percentual relativo'],['campo','Valor de uma coluna'],['campo_percentual','Percentual de uma coluna']],data.tipo);
       const valueWrap=document.createElement('label'); const valueTitle=document.createElement('span');valueWrap.append(valueTitle);
       const value=document.createElement('input'); value.type='text';value.inputMode='decimal'; value.value=data.valor || '0'; value.placeholder='Ex.: 2,50';valueWrap.append(value);fields.append(valueWrap);
-      const fieldWrap=document.createElement('label');fieldWrap.textContent='Coluna da tabela';
+      const fieldWrap=document.createElement('label');fieldWrap.textContent='Buscar e escolher campo numérico';
+      const fieldSearch=document.createElement('input');fieldSearch.type='search';fieldSearch.placeholder='Ex.: custo, frete';fieldWrap.append(fieldSearch);
       const field=document.createElement('select');fieldWrap.append(field);fields.append(fieldWrap);
-      const fill=()=> {const selected=field.value || data.campo || ''; const opts=formulaFields.filter(f=>f.numerico).map(f=>[f.campo,f.campo]); if(selected&&!opts.some(o=>o[0]===selected))opts.push([selected,selected]); formulaOptions(field,[['','Selecione uma coluna'],...opts],selected);}; fill();
+      const fill=()=> {const selected=field.value || data.campo || ''; const termo=fieldSearch.value.trim().toUpperCase(); const opts=formulaFields.filter(f=>f.numerico && (f.campo.includes(termo) || f.campo===selected)).map(f=>[f.campo,f.campo]); if(selected&&!opts.some(o=>o[0]===selected))opts.push([selected,selected]); formulaOptions(field,[['','Selecione uma coluna'],...opts],selected);}; fill(); fieldSearch.addEventListener('input', fill);
       const help=document.createElement('p');help.className='formula-help';row.append(help);
       const visibility=()=> {
         const column=type.value.startsWith('campo');valueWrap.hidden=column;fieldWrap.hidden=!column;
         valueTitle.textContent=type.value==='percentual'?'Percentual (%)':target.value==='resultado'?'Pontos percentuais':'Valor (R$)';
-        help.textContent=column?'Carregue os parâmetros das tabelas e selecione uma coluna numérica.':type.value==='percentual'?'Variação relativa: um resultado de 40% com +10% passa a 44%.':target.value==='resultado'?'Pontos percentuais: um resultado de 40% com +5 pontos passa a 45%.':'O valor é somado ou subtraído antes de calcular o percentual de lucro.';
+        help.textContent=column?'Busque e selecione uma coluna numérica do catálogo validado. As origens são definidas pela aplicação.':type.value==='percentual'?'Variação relativa: um resultado de 40% com +10% passa a 44%.':target.value==='resultado'?'Pontos percentuais: um resultado de 40% com +5 pontos passa a 45%.':'O valor é somado ou subtraído antes de calcular o percentual de lucro.';
       }; type.addEventListener('change',visibility);target.addEventListener('change',visibility); visibility();
       const remove=document.createElement('button'); remove.type='button';remove.className='secondary formula-remove';remove.textContent='Remover';remove.setAttribute('aria-label','Remover este ajuste');remove.onclick=()=>row.remove();header.append(remove);
       row.read=()=>({alvo:target.value,operacao:operation.value,tipo:type.value,...(type.value.startsWith('campo')?{campo:field.value}:{valor:value.value})}); row.refresh=fill;
@@ -201,10 +236,12 @@ JS_FORMULAS = r'''
     function formulaRead() {
       const data={nome:fe('name').value,ativa:fe('active').checked,prioridade:Number(fe('priority').value),todos_produtos:fe('all').checked,
         produtos:fe('all').checked?[]:fe('products').value.split(/[\s,;]+/).filter(Boolean),where:fe('all').checked?'':fe('where').value,ajustes:[...fe('adjustments').children].map(r=>r.read())};
+      if(formulaCostSelected !== 'PCEST.CUSTOULTENT') data.campo_custo=formulaCostSelected;
       if(fe('saved').value)data.id=fe('saved').value;return data;
     }
     function formulaEdit() {
       const rule=formulaRules.find(r=>r.id===fe('saved').value)||{nome:'',ativa:false,prioridade:100,produtos:[],where:'',ajustes:[]};
+      formulaCostSelected=rule.campo_custo || 'PCEST.CUSTOULTENT'; fe('cost-search').value=''; formulaRefreshCost();
       fe('name').value=rule.nome;fe('active').checked=rule.ativa;fe('priority').value=rule.prioridade;fe('all').checked=!!rule.todos_produtos;
       fe('products').value=rule.produtos.join(', ');fe('where').value=rule.where;fe('adjustments').replaceChildren();rule.ajustes.forEach(formulaAdjustment);
       fe('delete').disabled=!rule.id;fe('result').textContent='Informe um produto e clique em Simular cálculo para comparar.';formulaNotice('');
@@ -218,7 +255,7 @@ JS_FORMULAS = r'''
     let formulaLoaded=false;
     async function carregarManutencaoFormulas() {
       if (formulaLoaded) return;
-      try { await formulaLoad(); formulaLoaded=true; }
+      try { await formulaLoad(); formulaLoaded=true; await formulaCatalogLoad(); }
       catch (error) { formulaNotice(error.message); }
     }
     function formulaScope() {
@@ -229,7 +266,7 @@ JS_FORMULAS = r'''
     fe('all').onchange=formulaScope;
     fe('saved').onchange=formulaEdit;
     fe('add').onclick=()=>{if(fe('adjustments').children.length<20)formulaAdjustment();else formulaNotice('Limite de 20 ajustes.');};
-    fe('catalog').onclick=async()=>{fe('catalog').disabled=true;try{fe('catalog-status').textContent='Carregando parâmetros…';formulaFields=(await request('/api/formulas/catalog')).campos;[...fe('adjustments').children].forEach(r=>r.refresh());fe('catalog-status').textContent=`${formulaFields.filter(f=>f.numerico).length} colunas numéricas disponíveis para os ajustes.`;}catch(e){fe('catalog-status').textContent=e.message;}finally{fe('catalog').disabled=false;}};
+    fe('catalog').onclick=formulaCatalogLoad;
     function formulaInvalidate() {
       fe('confirmation-status').textContent='Há alterações. Confirme a fórmula para atualizar a prévia.';
       fe('result').textContent='Aguardando confirmação dos ajustes para atualizar a simulação.';

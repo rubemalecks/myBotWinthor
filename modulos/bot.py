@@ -16,7 +16,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters,
-    TypeHandler,
+    TypeHandler, ApplicationHandlerStop,
 )
 
 from modulos.database import consultar_produto, consultar_custos, pesquisar_produtos, produto_existe, listar_filiais_produto
@@ -24,6 +24,7 @@ from modulos.leitor_barras import ler_codigo_barras
 from modulos.calculos import ganho_sobre_custo
 from modulos.formulas import explicar_formula
 from modulos.mensagens import renderizar_mensagem
+from modulos.campos_custos import valores_custos
 from modulos.campos_produto import valores_campos_produto
 from modulos.regras_margem import obter_regras
 from modulos.database import consultar_calculos_formulas_produto
@@ -46,7 +47,21 @@ logger = logging.getLogger(__name__)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 
 
+from modulos.seguranca import LimiteTaxa
+_limite_telegram = LimiteTaxa()
+
+
 async def registrar_recebimento_telegram(update, context):
+    usuario = update.effective_user
+    if usuario is None:
+        raise ApplicationHandlerStop
+    if not _limite_telegram.permitir(('usuario', usuario.id), 30) or not _limite_telegram.permitir(('global',), 180):
+        if _limite_telegram.permitir(('aviso', usuario.id), 1, janela=15):
+            if update.callback_query:
+                await update.callback_query.answer('Muitas consultas. Aguarde um minuto.', show_alert=True)
+            elif update.effective_message:
+                await update.effective_message.reply_text('⏳ Muitas consultas. Aguarde um minuto.')
+        raise ApplicationHandlerStop
     registrar_consulta_log(update, 'telegram', 'RECEBIDO',
                            formato='botao' if update.callback_query else 'mensagem')
 
@@ -255,7 +270,7 @@ async def comando_formula(update: Update, context: ContextTypes.DEFAULT_TYPE):
             permissoes_campos = {'consulta_preco', 'ver_custos'} if exibir_custo else {'consulta_preco'}
             texto = renderizar_mensagem('formula_produto', descricao=produtos[0]['descricao'], codprod=produtos[0]['codprod'],
                 **valores_campos_produto(produtos[0], permissoes_campos))
-            texto += 'Preço: PCTABPR.PVENDA. Custo de entrada: PCEST.CUSTOULTENT (valor registrado no WinThor).\n'
+            texto += 'Base padrão: preço PCTABPR.PVENDA e custo PCEST.CUSTOULTENT. Regras personalizadas indicam o custo escolhido na expressão.\n'
             regras = await asyncio.to_thread(obter_regras, True)
             if regras:
                 calculos = await consultar_com_log(update, 'formula_personalizada_produto', consultar_calculos_formulas_produto,
@@ -263,7 +278,8 @@ async def comando_formula(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for linha in calculos:
                     texto += f'\n🏢 Filial {linha["codfilial"]} · 📋 {linha["numregiao"]} — {linha["nome_tabela"]}\n'
                     texto += explicar_formula(linha['preco'], linha['custo'], exibir_custo,
-                        resultado=linha['atual'], parametros=linha['parametros'])
+                        resultado=linha['atual'], parametros=linha['parametros'],
+                        exibir_preco_programado=await asyncio.to_thread(tem_permissao, update.effective_user.id, 'ver_preco_programado'))
             else:
                 for custo in custos:
                     for produto in produtos:
@@ -435,7 +451,8 @@ def montar_mensagem_custos(custos, produtos):
         if varias_filiais:
             mensagem += f'🏢 FILIAL {item["codfilial"]}\n\n'
         mensagem += renderizar_mensagem('custos', custo=formatar_moeda(item['custoultent'], 5),
-            data_entrada=formatar_data(item['dtultent']), filial=item['codfilial'])
+            data_entrada=formatar_data(item['dtultent']), filial=item['codfilial'],
+            **valores_custos(item))
         if item['numtransent'] is not None:
             mensagem += renderizar_mensagem('nota', nota=item['numnota'], codfornec=item['codfornec'],
                 fornecedor=item['nome_fornecedor'] or 'Não informado', emissao=formatar_data(item['dtemissao']),
@@ -503,7 +520,7 @@ async def clique_contexto_produto(update, context):
         await query.answer('Consulta cancelada.')
         await query.edit_message_reply_markup(reply_markup=None)
         return
-    if not partes[2].isdigit() or not 0 <= int(partes[2]) < len(fluxo['opcoes']):
+    if not partes[2].isascii() or not partes[2].isdecimal() or len(partes[2]) > 3 or not 0 <= int(partes[2]) < len(fluxo['opcoes']):
         await query.answer('Opção inválida.', show_alert=True)
         return
     context.user_data.pop('selecao_produto', None)
@@ -516,7 +533,7 @@ async def clique_contexto_produto(update, context):
 
 async def processar_codigo(update: Update, codigo: str, context=None, origem='manual', selecoes=None):
     codigo = codigo.strip()
-    if not codigo or not codigo.isascii() or not codigo.isdecimal():
+    if not codigo or len(codigo) > 15 or not codigo.isascii() or not codigo.isdecimal():
         await update.effective_message.reply_text('⚠️ Envie um código numérico válido.')
         return
     if not await verificar_acesso_consulta(update):
@@ -627,7 +644,7 @@ async def pesquisar_por_nome(update: Update, nome: str):
         await update.effective_message.reply_text('⛔ Seu perfil não permite consultar preços.')
         return
     nome = nome.strip()
-    if len(nome) < 3:
+    if not 3 <= len(nome) <= 100 or not nome.replace('%', '').replace('_', '').strip():
         await update.effective_message.reply_text('⚠️ Digite pelo menos 3 caracteres para pesquisar pelo nome.')
         return
     try:
@@ -707,6 +724,9 @@ async def consultar_por_foto(update: Update, context: ContextTypes.DEFAULT_TYPE)
             arquivo = await mensagem.document.get_file()
         else:
             await mensagem.reply_text('⚠️ Envie uma foto do código de barras.')
+            return
+        if arquivo.file_size and arquivo.file_size > 5 * 1024 * 1024:
+            await mensagem.reply_text('⚠️ A imagem deve ter no máximo 5 MiB.')
             return
         buffer = BytesIO()
         await arquivo.download_to_memory(out=buffer)
@@ -828,6 +848,10 @@ async def selecionar_filial_margem(update, context, filial):
 
 
 async def executar_margem(update, context, regiao=None):
+    if not await margem_autorizada(update):
+        context.user_data.pop('margem_fluxo', None)
+        await update.effective_message.reply_text('⛔ Acesso não autorizado.')
+        return
     fluxo = context.user_data.get('margem_fluxo')
     if not fluxo or 'filial' not in fluxo:
         await update.effective_message.reply_text('⚠️ Consulta expirada. Use /margem novamente.')
@@ -862,7 +886,13 @@ async def clique_margem(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer('Seleção expirada. Use /margem novamente.', show_alert=True)
         return
     dado = query.data
+    if not isinstance(dado, str) or ':' not in dado:
+        await query.answer('Opção inválida.', show_alert=True)
+        return
     tipo, valor = dado.split(':', 1)
+    if tipo in ('mgd', 'mgf', 'mgr') and (not valor.isascii() or not valor.isdecimal() or len(valor) > 3):
+        await query.answer('Opção inválida.', show_alert=True)
+        return
     fase_esperada = {'mgd': 'departamento_botao', 'mgf': 'filial',
                      'mgmodo': 'modo_regiao', 'mgr': 'regiao'}
     if fluxo.get('fase') != fase_esperada.get(tipo):
@@ -959,7 +989,7 @@ def executar_bot_telegram(token):
             loop.close()
 
 
-def main():
+def main(parar=None):
     inicializar()
     from modulos.painel_admin import iniciar_painel, obter_url_acesso
     servidor, thread_painel = iniciar_painel()
@@ -995,7 +1025,7 @@ def main():
             'Painel administrativo: '
             'acesse o endereco informado no log para configurar o bot.'
         )
-        while True:
+        while parar is None or not parar():
             time.sleep(1)
     except KeyboardInterrupt:
         logger.info('Encerramento solicitado por Ctrl+C. Finalizando o painel...')

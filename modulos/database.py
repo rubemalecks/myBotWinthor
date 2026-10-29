@@ -1,7 +1,9 @@
 
 import os
 from pathlib import Path
-from threading import Lock
+from threading import Lock, BoundedSemaphore, Timer, Event
+from contextlib import contextmanager
+import re
 
 import oracledb
 from dotenv import load_dotenv
@@ -24,11 +26,23 @@ class ErroAcessoWinthor(RuntimeError):
     """A sessão Oracle abriu, mas a consulta de produtos não está acessível."""
 
 
+def validar_diretorio_cliente(caminho):
+    if not isinstance(caminho, str) or '\x00' in caminho or caminho.replace('\\', '/').startswith('//') or '://' in caminho:
+        raise ValueError('Oracle Client deve estar em uma pasta local confiável, sem caminho de rede ou URL.')
+    if os.name == 'nt' and caminho:
+        import ctypes
+        from pathlib import PureWindowsPath
+        raiz = PureWindowsPath(caminho).anchor
+        if raiz and ctypes.windll.kernel32.GetDriveTypeW(raiz) == 4:
+            raise ValueError('Oracle Client não pode ser carregado de uma unidade de rede.')
+
+
 def _inicializar_oracle_client(configuracao):
     global _oracle_client_inicializado
     if _oracle_client_inicializado:
         return
     caminho_cliente = configuracao['ORACLE_CLIENT_DIR'].strip()
+    validar_diretorio_cliente(caminho_cliente)
     if not caminho_cliente and (BASE_DIR / "oracle_client").is_dir():
         caminho_cliente = str(BASE_DIR / "oracle_client")
     if not caminho_cliente:
@@ -43,7 +57,7 @@ def _inicializar_oracle_client(configuracao):
             _oracle_client_inicializado = True
 
 
-def conectar(tcp_connect_timeout=None):
+def _abrir_conexao(tcp_connect_timeout=5):
     configuracao = obter_configuracao()
     _inicializar_oracle_client(configuracao)
     host = configuracao['ORACLE_HOST'].strip()
@@ -72,6 +86,56 @@ def conectar(tcp_connect_timeout=None):
     )
 
 
+# Limites por processo, compartilhados entre bot, painel e catálogos.
+_MAX_CONEXOES = BoundedSemaphore(4)
+TEMPO_CHAMADA_MS = 8000
+TEMPO_OPERACAO_S = 20
+MAX_LINHAS = 5000
+
+
+@contextmanager
+def conectar(tcp_connect_timeout=5):
+    if not _MAX_CONEXOES.acquire(blocking=False):
+        raise RuntimeError('Limite de consultas Oracle simultâneas atingido. Tente novamente.')
+    temporizador = None
+    expirado = Event()
+    try:
+        with _abrir_conexao(tcp_connect_timeout=tcp_connect_timeout) as conexao:
+            conexao.call_timeout = TEMPO_CHAMADA_MS
+            def cancelar():
+                expirado.set()
+                try:
+                    conexao.cancel()
+                except Exception:
+                    pass
+            temporizador = Timer(TEMPO_OPERACAO_S, cancelar)
+            temporizador.daemon = True
+            temporizador.start()
+            with conexao.cursor() as cursor:
+                cursor.execute('SET TRANSACTION READ ONLY')
+            try:
+                yield conexao
+                if expirado.is_set():
+                    raise RuntimeError('Consulta Oracle excedeu o tempo permitido.')
+            finally:
+                temporizador.cancel()
+                # Aguarda um cancelamento já iniciado antes de fechar/reutilizar a sessão.
+                temporizador.join(timeout=1)
+    finally:
+        if temporizador is not None:
+            temporizador.cancel()
+        _MAX_CONEXOES.release()
+
+
+def validar_select(sql):
+    if not isinstance(sql, str) or len(sql) > 256000:
+        raise ValueError('Consulta excede o tamanho permitido.')
+    texto = re.sub(r"'(?:[^']|'')*'", "''", sql)
+    if not re.match(r'^\s*(SELECT|WITH)\b', texto, re.I) or re.search(
+        r';|--|/\*|\b(INSERT|UPDATE|DELETE|MERGE|ALTER|DROP|TRUNCATE|GRANT|REVOKE|BEGIN|DECLARE|EXECUTE|COMMIT|ROLLBACK|LOCK)\b', texto, re.I):
+        raise ValueError('Somente SELECTs internos de leitura são permitidos.')
+
+
 def testar_conexao_oracle():
     with conectar(tcp_connect_timeout=5) as conexao:
         conexao.call_timeout = 5000
@@ -96,6 +160,7 @@ def testar_conexao_oracle():
 
 
 def executar_consulta(sql, parametros):
+    validar_select(sql)
     with conectar() as conexao:
         with conexao.cursor() as cursor:
             cursor.execute(sql, parametros)
@@ -105,10 +170,10 @@ def executar_consulta(sql, parametros):
                 for coluna in cursor.description
             ]
 
-            return [
-                dict(zip(colunas, linha))
-                for linha in cursor.fetchall()
-            ]
+            linhas = cursor.fetchmany(MAX_LINHAS + 1)
+            if len(linhas) > MAX_LINHAS:
+                raise RuntimeError('Consulta excedeu o limite de registros. Refine os filtros.')
+            return [dict(zip(colunas, linha)) for linha in linhas]
 
 
 # ==========================================
@@ -212,6 +277,21 @@ def listar_colunas_produto():
             return sorted(colunas, key=lambda item: item['coluna'])
 
 
+def listar_colunas_custos():
+    """Metadados das colunas simples de PCEST; sem ler registros."""
+    import re
+    with conectar(tcp_connect_timeout=5) as conexao:
+        conexao.call_timeout = 5000
+        with conexao.cursor() as cursor:
+            cursor.execute('SELECT * FROM PCEST WHERE 1=0')
+            tipos = {'DB_TYPE_NUMBER', 'DB_TYPE_BINARY_DOUBLE', 'DB_TYPE_BINARY_FLOAT',
+                     'DB_TYPE_VARCHAR', 'DB_TYPE_NVARCHAR', 'DB_TYPE_CHAR', 'DB_TYPE_NCHAR',
+                     'DB_TYPE_DATE', 'DB_TYPE_TIMESTAMP'}
+            return sorted([{'coluna': d[0], 'variavel': 'pcest_' + d[0].lower()}
+                for d in cursor.description if re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', d[0])
+                and getattr(d[1], 'name', '') in tipos], key=lambda c: c['coluna'])
+
+
 def listar_catalogo_formulas():
     from modulos.regras_margem import TABELAS
     numericos = {'DB_TYPE_NUMBER', 'DB_TYPE_BINARY_DOUBLE', 'DB_TYPE_BINARY_FLOAT'}
@@ -244,6 +324,8 @@ def consultar_calculos_formulas_produto(codprod, escopo=None, regras=None, rascu
         selecoes.append(f'CASE WHEN {compilador.condicao(rascunho)} THEN 1 ELSE 0 END AS SIM_APLICA')
     campos = sorted({ajuste['campo'] for regra in [*regras, *([rascunho] if rascunho else [])]
                      for ajuste in regra['ajustes'] if ajuste['tipo'].startswith('campo')})
+    campos = sorted(set(campos) | {regra['campo_custo']
+        for regra in [*regras, *([rascunho] if rascunho else [])] if regra.get('campo_custo')})
     for i, campo in enumerate(campos):
         tabela, coluna = campo.split('.')
         selecoes.append(f'{TABELAS[tabela]}.{coluna} AS VALOR_{i}')
@@ -278,7 +360,13 @@ def consultar_calculos_formulas_produto(codprod, escopo=None, regras=None, rascu
 # CONSULTA RESTRITA DE CUSTOS
 # ==========================================
 
-def consultar_custos(codprod, escopo=None):
+def consultar_custos(codprod, escopo=None, texto=None):
+    from modulos.campos_custos import variaveis_custos
+    from modulos.permissoes import obter_mensagens_personalizadas
+    if texto is None:
+        texto = obter_mensagens_personalizadas().get('custos', '')
+    variaveis = sorted(variaveis_custos(texto))
+    extras = ''.join(f', E.{v[6:].upper()} AS {v.upper()}' for v in variaveis)
     sql = """
         WITH ULTIMA_NF AS (
             SELECT
@@ -347,6 +435,7 @@ def consultar_custos(codprod, escopo=None):
         ORDER BY E.CODFILIAL
     """
 
+    sql = sql.replace("E.CUSTOREAL,", "E.CUSTOREAL" + extras + ",")
     params = {"CODPROD_CTE": int(codprod), "CODPROD_PRINCIPAL": int(codprod)}
     sql = sql.replace('ORDER BY E.CODFILIAL', filtros_escopo(escopo, params, filial='E.CODFILIAL', regiao=False) + ' ORDER BY E.CODFILIAL')
     return executar_consulta(sql, params)
@@ -367,13 +456,14 @@ def pesquisar_produtos(nome, escopo=None):
             WHERE R.STATUS = 'A'
               AND P.DTEXCLUSAO IS NULL
               AND UPPER(P.DESCRICAO)
-                  LIKE :NOME
+                  LIKE :NOME ESCAPE '\\'
             ORDER BY P.DESCRICAO, P.CODPROD
         )
         WHERE ROWNUM <= 11
     """
 
-    params = {"NOME": f"%{nome.upper()}%"}
+    nome = nome.upper().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    params = {"NOME": f"%{nome}%"}
     sql = sql.replace('ORDER BY P.DESCRICAO', filtros_escopo(escopo, params, regiao='T.NUMREGIAO') + ' ORDER BY P.DESCRICAO')
     return executar_consulta(sql, params)
 
@@ -392,10 +482,12 @@ def listar_opcoes_acesso():
         with conexao.cursor() as cursor:
             cursor.execute('SELECT DISTINCT CODFILIAL FROM PCEST ORDER BY CODFILIAL')
             filiais = [{'codigo': str(linha[0]), 'nome': f'Filial {linha[0]}'}
-                       for linha in cursor.fetchall() if linha[0] is not None]
+                       for linha in cursor.fetchmany(MAX_LINHAS + 1) if linha[0] is not None]
             cursor.execute('SELECT NUMREGIAO, REGIAO, STATUS FROM PCREGIAO ORDER BY NUMREGIAO')
             tabelas = [{'codigo': str(linha[0]), 'nome': str(linha[1] or ''),
-                        'ativa': str(linha[2] or '').strip() == 'A'} for linha in cursor.fetchall()]
+                        'ativa': str(linha[2] or '').strip() == 'A'} for linha in cursor.fetchmany(MAX_LINHAS + 1)]
+            if len(filiais) > MAX_LINHAS or len(tabelas) > MAX_LINHAS:
+                raise RuntimeError('Catálogo excede o limite de registros.')
     return {'filiais_permitidas': filiais, 'tabelas_permitidas': tabelas}
 
 

@@ -1,5 +1,5 @@
 anyio==4.15.1
-certifi==2026.7.22
+certifi==2026.10.19
 cffi==2.1.1
 cryptography==50.0.2
 fastapi>=0.115,<1
@@ -11,7 +11,7 @@ itsdangerous>=2.2,<3
 numpy==2.5.4
 opencv-contrib-python==5.0.0.93
 oracledb==26.0.1
-pillow==12.3.0
+pillow==13.0.0
 pycparser==3.11
 python-dotenv==1.2.4
 python-telegram-bot==22.8

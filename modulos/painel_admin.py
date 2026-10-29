@@ -58,7 +58,10 @@ SESSION_SECRET = obter_ou_criar_configuracao(
     os.getenv("WEB_SESSION_SECRET", "").strip() or secrets.token_urlsafe(48),
 )
 
-app = FastAPI(title="Painel de permissões do bot", docs_url=None, redoc_url=None)
+app = FastAPI(title="Painel de permissões do bot", docs_url=None, redoc_url=None, openapi_url=None)
+from modulos.seguranca import ProtecaoHTTP
+app.add_middleware(ProtecaoHTTP, autenticar=lambda r: _exigir_admin(r), csrf=lambda r: _exigir_csrf(r),
+                   hostname=lambda: urlparse(obter_configuracao()["WEB_ADMIN_URL"]).hostname)
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
@@ -199,6 +202,11 @@ PAGINA = """<!doctype html>
     .message-layout { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:18px; }
     .message-editor select,.message-editor textarea { width:100%; box-sizing:border-box; background:var(--field); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:10px; font:inherit; margin:6px 0 12px; }
     .message-editor textarea { min-height:220px; resize:vertical; font-family:Consolas,monospace; line-height:1.5; }
+    .cost-builder { border:1px solid var(--border); border-radius:10px; padding:14px; margin:12px 0; background:var(--field); }
+    .cost-builder h3 { margin:0 0 6px; }
+    .cost-builder input { width:100%; box-sizing:border-box; }
+    .cost-builder pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:.8rem; padding:10px; border:1px solid var(--border); border-radius:6px; }
+    .cost-builder .builder-status { font-size:.85rem; color:var(--muted); }
     .message-variables { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 12px; }
     .message-variables button { font-size:.8rem; padding:5px 8px; }
     #message-preview { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--field); border:1px solid var(--border); border-radius:10px; padding:16px; min-height:180px; line-height:1.6; }
@@ -364,7 +372,27 @@ PAGINA = """<!doctype html>
             <label for="message-content">Texto da mensagem</label>
             <textarea id="message-content" rows="9" maxlength="2500" required spellcheck="false" aria-describedby="message-hint message-counter"></textarea>
             <small id="message-counter" class="muted"></small>
-            <p id="message-hint" class="muted compact-help">Nos blocos de identificação do produto, digite qualquer coluna válida de PCPRODUT entre chaves, como {embalagem} ou {codauxiliar}. O campo é validado no Oracle ao testar ou salvar. Maiúsculas e minúsculas são aceitas.</p>
+            <div id="message-cost-fields" class="cost-builder" hidden>
+              <h3>Escolher o campo exibido</h3>
+              <p class="muted compact-help">Origem fixa: PCEST. Escolha uma coluna e onde usá-la na mensagem.</p>
+              <label for="message-cost-search">1. Buscar coluna</label>
+              <input id="message-cost-search" type="search" placeholder="Ex.: custo, real, última entrada" autocomplete="off">
+              <label for="message-cost-column">Coluna disponível</label>
+              <select id="message-cost-column" disabled></select>
+              <p id="message-cost-status" class="builder-status" role="status"></p>
+              <button id="message-cost-reload" type="button" class="secondary">Atualizar colunas</button>
+              <label for="message-cost-target">2. Aplicar em</label>
+              <select id="message-cost-target"></select>
+              <div id="message-cost-label-controls" hidden>
+                <label for="message-cost-label">Nome na nova linha</label>
+                <input id="message-cost-label" type="text" maxlength="120" placeholder="Ex.: Custo real">
+              </div>
+              <p id="message-cost-summary" class="muted compact-help"></p>
+              <details><summary>Ver consulta de referência</summary><pre id="message-cost-query"></pre><p class="muted compact-help">Consulta ilustrativa. O bot mantém os filtros de acesso e produto ativo. A tabela é fixa; somente a coluna muda.</p></details>
+              <button id="message-cost-apply" type="button" disabled>Aplicar campo à mensagem</button>
+              <p class="muted compact-help">Aplicar atualiza o rascunho e a prévia. Para persistir, clique em Salvar mensagem. Valores numéricos usam moeda com cinco casas decimais.</p>
+            </div>
+            <p id="message-hint" class="muted compact-help">Nos blocos de identificação do produto, digite qualquer coluna válida de PCPRODUT entre chaves, como {embalagem} ou {codauxiliar}. No bloco de custos, escolha uma coluna de PCEST na lista ou digite {pcest_custoreal}, {pcest_custofin} etc. {custo} continua sendo PCEST.CUSTOULTENT. O campo é validado no Oracle ao testar ou salvar. Maiúsculas e minúsculas são aceitas.</p>
             <div id="message-variables" class="message-variables" role="group" aria-label="Variáveis disponíveis"></div>
             <p id="message-error" role="alert"></p>
             <div class="form-actions"><button id="message-save" type="submit">Salvar mensagem</button>
@@ -550,11 +578,11 @@ PAGINA = """<!doctype html>
       const version = ++previewVersion;
       const id = messageSelect.value;
       const texto = messageContent.value;
-      const codigo = ['produto', 'formula_produto'].includes(id) ? messagePreviewProduct : '';
+      const codigo = ['produto', 'formula_produto', 'custos'].includes(id) ? messagePreviewProduct : '';
       messageError.textContent = "";
       document.getElementById('message-preview-error').textContent = '';
       document.getElementById("message-counter").textContent = `${texto.length} / ${messageContent.maxLength} caracteres`;
-      messagePreview.textContent = codigo ? `Consultando PCPRODUT para o CODPROD ${codigo}…` : "Atualizando prévia…";
+      messagePreview.textContent = codigo ? `Consultando Oracle para o CODPROD ${codigo}…` : "Atualizando prévia…";
       const executar = async () => {
         const button = document.getElementById('message-real-preview');
         if(codigo) { button.disabled = true; button.textContent = 'Consultando…'; }
@@ -582,11 +610,115 @@ PAGINA = """<!doctype html>
       messagePreviewProduct = codigo; await atualizarPreviaMensagem(true);
     });
     document.getElementById('message-example-preview').addEventListener('click', () => { messagePreviewProduct = ''; atualizarPreviaMensagem(true); });
+    // COST_BUILDER_START
+    function camposCustoNoTexto(texto) {
+      const campos = [];
+      const regex = /(?<!\\{)\\{(custo|data_entrada|filial|pcest_[a-z][a-z0-9_]*)\\}(?!\\})/gi;
+      for (const match of texto.matchAll(regex)) {
+        campos.push({inicio:match.index, variavel:match[1], token:match[0]});
+      }
+      return campos;
+    }
+    function aplicarCampoCusto(texto, destino, campo, rotulo) {
+      if (!/^pcest_[a-z][a-z0-9_]{0,127}$/.test(campo)) throw new Error('Escolha uma coluna válida.');
+      const token = `{${campo}}`;
+      if (destino === 'add') {
+        const nome = rotulo.trim();
+        if (!nome || /[{}\\r\\n]/.test(nome)) throw new Error('Informe um nome para a linha, sem chaves ou quebras de linha.');
+        return texto + (texto && !texto.endsWith('\\n') ? '\\n' : '') + nome + ': ' + token + '\\n';
+      }
+      const atual = camposCustoNoTexto(texto).find(c => String(c.inicio) === destino);
+      if (!atual) throw new Error('O campo da mensagem mudou. Selecione novamente onde aplicar.');
+      return texto.slice(0, atual.inicio) + token + texto.slice(atual.inicio + atual.token.length);
+    }
+    // COST_BUILDER_END
+    let colunasCusto = [];
+    let carregandoColunasCusto = false;
+    const costColumn = document.getElementById('message-cost-column');
+    const costTarget = document.getElementById('message-cost-target');
+    const costSearch = document.getElementById('message-cost-search');
+    const costStatus = document.getElementById('message-cost-status');
+    const nomesCusto = {CUSTOULTENT:'Custo da última entrada', CUSTOREAL:'Custo real', CUSTOFIN:'Custo financeiro', DTULTENT:'Última entrada'};
+    function atualizarResumoCusto() {
+      const campo = colunasCusto.find(c => c.variavel === costColumn.value);
+      const adicionar = costTarget.value === 'add';
+      document.getElementById('message-cost-label-controls').hidden = !adicionar;
+      document.getElementById('message-cost-apply').disabled = !campo || carregandoColunasCusto;
+      document.getElementById('message-cost-summary').textContent = campo ?
+        `${adicionar ? 'Adicionar uma linha com' : 'Substituir somente o valor selecionado por'} PCEST.${campo.coluna}. ${adicionar ? '' : 'O texto ao redor será preservado.'}` : 'Escolha uma coluna para continuar.';
+      document.getElementById('message-cost-query').textContent = campo ?
+        `SELECT E.${campo.coluna}\\nFROM PCEST E\\nWHERE E.CODPROD = :CODPROD\\n  AND E.CODFILIAL = :CODFILIAL` : 'Selecione uma coluna.';
+    }
+    function atualizarDestinosCusto() {
+      const anterior = costTarget.value;
+      costTarget.replaceChildren();
+      for (const campo of camposCustoNoTexto(messageContent.value)) {
+        const option = document.createElement('option'); option.value = String(campo.inicio);
+        const linha = messageContent.value.slice(0, campo.inicio).split('\\n').pop().trim();
+        option.textContent = `Trocar ${campo.token}${linha ? ' — ' + linha : ''}`;
+        costTarget.append(option);
+      }
+      const add = document.createElement('option'); add.value = 'add'; add.textContent = 'Adicionar uma nova linha'; costTarget.append(add);
+      if ([...costTarget.options].some(o => o.value === anterior)) costTarget.value = anterior;
+      atualizarResumoCusto();
+    }
+    function filtrarColunasCusto() {
+      const anterior = costColumn.value;
+      const busca = costSearch.value.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().trim();
+      const disponiveis = colunasCusto.filter(c =>
+        `${c.coluna} ${nomesCusto[c.coluna] || ''}`.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().includes(busca));
+      costColumn.replaceChildren();
+      const placeholder = document.createElement('option'); placeholder.value = '';
+      placeholder.textContent = carregandoColunasCusto ? 'Carregando colunas…' : 'Escolha uma coluna…'; costColumn.append(placeholder);
+      for (const campo of disponiveis) {
+        const option = document.createElement('option'); option.value = campo.variavel;
+        option.textContent = campo.coluna + (nomesCusto[campo.coluna] ? ' — ' + nomesCusto[campo.coluna] : ''); costColumn.append(option);
+      }
+      if (disponiveis.some(c => c.variavel === anterior)) costColumn.value = anterior;
+      costColumn.disabled = carregandoColunasCusto || !disponiveis.length;
+      if (!carregandoColunasCusto) costStatus.textContent = `${disponiveis.length} de ${colunasCusto.length} colunas disponíveis.`;
+      atualizarResumoCusto();
+    }
+    async function carregarColunasCusto() {
+      if (carregandoColunasCusto) return;
+      carregandoColunasCusto = true;
+      costStatus.textContent = 'Consultando colunas disponíveis no Oracle…';
+      filtrarColunasCusto();
+      document.getElementById('message-cost-reload').disabled = true;
+      try {
+        const result = await request('/api/message-templates/cost-columns');
+        colunasCusto = result.campos;
+        carregandoColunasCusto = false;
+        filtrarColunasCusto();
+      } catch (error) {
+        colunasCusto = []; carregandoColunasCusto = false; filtrarColunasCusto();
+        costStatus.textContent = error.message + ' Use Atualizar colunas para tentar novamente.';
+      } finally { document.getElementById('message-cost-reload').disabled = false; }
+    }
+    costSearch.addEventListener('input', filtrarColunasCusto);
+    costTarget.addEventListener('change', atualizarResumoCusto);
+    costColumn.addEventListener('change', () => {
+      const campo = colunasCusto.find(c => c.variavel === costColumn.value);
+      if (campo) document.getElementById('message-cost-label').value = nomesCusto[campo.coluna] || campo.coluna;
+      atualizarResumoCusto();
+    });
+    document.getElementById('message-cost-reload').addEventListener('click', carregarColunasCusto);
+    document.getElementById('message-cost-apply').addEventListener('click', () => {
+      try {
+        if (messageSelect.value !== 'custos' || !colunasCusto.some(c => c.variavel === costColumn.value)) throw new Error('Escolha uma coluna disponível.');
+        const texto = aplicarCampoCusto(messageContent.value, costTarget.value, costColumn.value, document.getElementById('message-cost-label').value);
+        if (texto.length > messageContent.maxLength) throw new Error('A mensagem ultrapassa o limite de caracteres.');
+        messageContent.value = texto; messageContent.dispatchEvent(new Event('input'));
+      } catch (error) { messageError.textContent = error.message; }
+    });
     function mostrarEditorMensagem() {
       const model = messageTemplates.find(item => item.id === messageSelect.value);
       if (!model) return;
-      document.getElementById('message-real-controls').hidden = !['produto', 'formula_produto'].includes(model.id);
+      document.getElementById('message-real-controls').hidden = !['produto', 'formula_produto', 'custos'].includes(model.id);
+      document.getElementById('message-cost-fields').hidden = model.id !== 'custos';
+      if (model.id === 'custos' && !colunasCusto.length) carregarColunasCusto();
       messageContent.value = messageDrafts.has(model.id) ? messageDrafts.get(model.id) : model.texto;
+      if (model.id === 'custos') atualizarDestinosCusto();
       const variables = document.getElementById("message-variables"); variables.replaceChildren();
       for (const [name, example] of Object.entries(model.exemplo)) {
         const button = document.createElement("button"); button.type = "button"; button.className = "secondary";
@@ -623,7 +755,9 @@ PAGINA = """<!doctype html>
     }
     messageSelect.addEventListener("change", mostrarEditorMensagem);
     messageContent.addEventListener("input", () => {
-      messageDrafts.set(messageSelect.value, messageContent.value); atualizarPreviaMensagem();
+      messageDrafts.set(messageSelect.value, messageContent.value);
+      if (messageSelect.value === 'custos') atualizarDestinosCusto();
+      atualizarPreviaMensagem();
     });
     document.getElementById("message-reset").addEventListener("click", () => {
       const model = messageTemplates.find(item => item.id === messageSelect.value);
@@ -1198,6 +1332,9 @@ PAGINA = """<!doctype html>
 def _exigir_admin(request):
     if request.session.get("admin") is not True:
         raise HTTPException(status_code=401, detail="Autenticação necessária.")
+    if request.session.get("seguranca") != 1:
+        request.session.clear()
+        raise HTTPException(status_code=401, detail="Entre novamente após a atualização de segurança.")
     versao = obter_versao_sessao_admin(ADMIN_PASSWORD)
     if request.session.get("versao_sessao") != versao:
         request.session.clear()
@@ -1249,6 +1386,8 @@ def listar_diretorios(request: Request, path: str = ""):
             {"name": str(p), "path": str(p)} for p in unidades if p.is_dir()
         ]}
     try:
+        if path.startswith(('\\\\', '//')):
+            raise ValueError('Use uma pasta local.')
         pasta = Path(path).expanduser() if path else Path.home()
         if not pasta.is_absolute():
             raise ValueError("Caminho relativo inválido.")
@@ -1280,6 +1419,8 @@ def sessao(request: Request):
 @app.post("/api/login")
 async def login(request: Request):
     ip = request.client.host if request.client else "unknown"
+    if len(_tentativas_login) >= 4096:
+        _tentativas_login.pop(next(iter(_tentativas_login)))
     agora = time.monotonic()
     tentativas, bloqueado_ate = _tentativas_login.get(ip, (0, 0.0))
     if bloqueado_ate > agora:
@@ -1299,16 +1440,28 @@ async def login(request: Request):
     senha_ok = (
         usuario_ok
         and isinstance(senha, str)
-        and verificar_senha_admin(senha, ADMIN_PASSWORD)
+        and await to_thread(verificar_senha_admin, senha, ADMIN_PASSWORD)
     )
     if not usuario_ok or not senha_ok:
+        tentativas, bloqueio_atual = _tentativas_login.get(ip, (0, 0.0))
+        if bloqueio_atual > time.monotonic():
+            raise HTTPException(429, "Muitas tentativas. Aguarde alguns minutos.")
         tentativas += 1
         bloqueado_ate = agora + 300 if tentativas >= 5 else 0.0
         _tentativas_login[ip] = (0 if bloqueado_ate else tentativas, bloqueado_ate)
         raise HTTPException(status_code=401, detail="Usuário ou senha inválidos.")
+    if senha == "admin":
+        try:
+            local = ipaddress.ip_address(ip).is_loopback and not any(
+                request.headers.get(h) for h in ("forwarded", "x-forwarded-for", "x-real-ip"))
+        except ValueError:
+            local = False
+        if not local:
+            raise HTTPException(403, "Troque a senha padrão acessando o painel na própria máquina (127.0.0.1).")
     _tentativas_login.pop(ip, None)
     request.session.clear()
     request.session["admin"] = True
+    request.session["seguranca"] = 1
     request.session["versao_sessao"] = obter_versao_sessao_admin(ADMIN_PASSWORD)
     request.session["csrf"] = os.urandom(32).hex()
     return {"csrf": request.session["csrf"]}
@@ -1387,6 +1540,16 @@ async def atualizar_campos_produto_painel(request: Request):
         raise HTTPException(status_code=503, detail='Não foi possível salvar os campos. Confira a conexão Oracle e o acesso à pasta de dados.') from erro
 
 
+@app.get('/api/message-templates/cost-columns')
+def colunas_custo_mensagem(request: Request):
+    _exigir_admin(request)
+    from modulos.database import listar_colunas_custos
+    try:
+        return {'campos': listar_colunas_custos()}
+    except Exception as erro:
+        raise HTTPException(503, 'Não foi possível carregar as colunas de PCEST. Confira o Oracle.') from erro
+
+
 @app.get("/api/message-templates")
 def modelos_mensagem(request: Request):
     _exigir_admin(request)
@@ -1404,7 +1567,7 @@ async def atualizar_modelos_mensagem(request: Request):
         dados = await request.json()
         if not isinstance(dados, dict) or set(dados) != {'templates'}:
             raise ValueError('Informe os modelos de mensagem.')
-        textos, campos, precisa_catalogo = preparar_mensagens(dados['templates'])
+        textos, campos, precisa_catalogo = await to_thread(preparar_mensagens, dados['templates'])
         if precisa_catalogo:
             catalogo = await to_thread(listar_colunas_produto)
             textos, campos, _ = preparar_mensagens(dados['templates'], catalogo)
@@ -1428,15 +1591,29 @@ async def previa_mensagem(request: Request):
         dados = await request.json()
         if not isinstance(dados, dict) or not {'id', 'texto'}.issubset(dados) or not set(dados).issubset({'id', 'texto', 'codprod'}) or not isinstance(dados['id'], str):
             raise ValueError('Informe o tipo e o texto da mensagem.')
-        textos, campos, precisa_catalogo = preparar_mensagens({dados['id']: dados['texto']})
+        textos, campos, precisa_catalogo = await to_thread(preparar_mensagens, {dados['id']: dados['texto']})
         if precisa_catalogo:
             catalogo = await to_thread(listar_colunas_produto)
             textos, campos, _ = preparar_mensagens({dados['id']: dados['texto']}, catalogo)
         texto = textos[dados['id']]
         if 'codprod' in dados:
             codigo = str(dados['codprod'])
-            if dados['id'] not in ('produto', 'formula_produto') or not codigo.isascii() or not codigo.isdecimal() or not 0 < int(codigo) < 10**15:
+            if dados['id'] not in ('produto', 'formula_produto', 'custos') or not codigo.isascii() or not codigo.isdecimal() or not 0 < int(codigo) < 10**15:
                 raise ValueError('Use um CODPROD positivo na identificação do produto.')
+            if dados['id'] == 'custos':
+                from modulos.database import consultar_custos
+                from modulos.campos_custos import valores_custos
+                from modulos.bot import formatar_moeda, formatar_data
+                linhas = await to_thread(consultar_custos, codigo, texto=texto)
+                if not linhas:
+                    raise HTTPException(404, 'Produto não encontrado, excluído ou sem registro de custo.')
+                previas = []
+                for item in linhas:
+                    valores = {'custo': formatar_moeda(item['custoultent'], 5),
+                               'data_entrada': formatar_data(item['dtultent']),
+                               'filial': item['codfilial'], **valores_custos(item)}
+                    previas.append('Filial: ' + str(item['codfilial']) + '\n' + previa_modelo('custos', texto, valores))
+                return {'texto': '\n'.join(previas), 'codprod': codigo, 'fonte': 'oracle'}
             produto = await to_thread(consultar_produto_previa, codigo, campos)
             if produto is None:
                 raise HTTPException(404, 'Produto não encontrado ou excluído.')
@@ -1461,7 +1638,7 @@ def status_servico_windows(request: Request):
         return obter_status_servico()
     except (OSError, RuntimeError) as erro:
         raise HTTPException(
-            status_code=503, detail=f"Não foi possível consultar o serviço do Windows: {erro}"
+            status_code=503, detail="Não foi possível consultar o serviço do Windows."
         ) from erro
 
 
@@ -1474,7 +1651,7 @@ def gerenciar_servico_windows(acao: str, request: Request):
     try:
         return solicitar_acao_servico(acao)
     except (OSError, RuntimeError, ValueError) as erro:
-        raise HTTPException(status_code=503, detail=str(erro)) from erro
+        raise HTTPException(status_code=503, detail="Não foi possível administrar o serviço Windows.") from erro
 
 
 async def _verificar_telegram(configuracoes):
@@ -1572,6 +1749,12 @@ async def atualizar_configuracoes_painel(request: Request):
     for chave in ("TELEGRAM_ADMIN_ID", "ORACLE_HOST", "ORACLE_PORT", "ORACLE_SERVICE", "ORACLE_USER"):
         if chave in atualizar:
             atualizar[chave] = re.sub(r"\s+", "", atualizar[chave])
+    if "ORACLE_CLIENT_DIR" in atualizar:
+        from modulos.database import validar_diretorio_cliente
+        try:
+            validar_diretorio_cliente(atualizar["ORACLE_CLIENT_DIR"])
+        except ValueError as erro:
+            raise HTTPException(400, str(erro)) from erro
     host_oracle = atualizar.get("ORACLE_HOST", "")
     if host_oracle and "." in host_oracle and re.fullmatch(r"[0-9.]+", host_oracle):
         try:
@@ -1835,7 +2018,7 @@ def iniciar_painel():
     if not host or not 1 <= port <= 65535:
         raise RuntimeError("WEB_ADMIN_HOST e WEB_ADMIN_PORT precisam ser válidos.")
     server = uvicorn.Server(
-        uvicorn.Config(app, host=host, port=port, log_level="info")
+        uvicorn.Config(app, host=host, port=port, log_level="info", proxy_headers=False, limit_concurrency=32)
     )
     thread = threading.Thread(
         target=server.run, name="painel-admin", daemon=True

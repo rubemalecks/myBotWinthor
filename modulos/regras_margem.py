@@ -78,7 +78,7 @@ def analisar_where(texto):
 
 
 def normalizar_regra(dados, salvar=True):
-    chaves = {'id', 'nome', 'ativa', 'prioridade', 'produtos', 'where', 'todos_produtos', 'ajustes'}
+    chaves = {'id', 'nome', 'ativa', 'prioridade', 'produtos', 'where', 'todos_produtos', 'ajustes', 'campo_custo'}
     if not isinstance(dados, dict) or not set(dados).issubset(chaves):
         raise ValueError('Regra contém campos inválidos.')
     nome = dados.get('nome', '').strip() if isinstance(dados.get('nome', ''), str) else ''
@@ -104,6 +104,9 @@ def normalizar_regra(dados, salvar=True):
         raise ValueError('Escolha todos os produtos ou use a lista/WHERE.')
     if salvar and not todos and not produtos and not where:
         raise ValueError('Vincule produtos, informe um WHERE ou marque Todos os produtos.')
+    campo_custo = referencia(dados.get('campo_custo', 'PCEST.CUSTOULTENT'))
+    if not campo_custo.startswith('PCEST.'):
+        raise ValueError('O campo base do custo deve ser uma coluna de PCEST.')
     ajustes = dados.get('ajustes', [])
     if not isinstance(ajustes, list) or len(ajustes) > 20:
         raise ValueError('A regra aceita até 20 ajustes.')
@@ -119,8 +122,11 @@ def normalizar_regra(dados, salvar=True):
         else:
             novo['valor'] = str(numero(ajuste.get('valor')))
         resultado.append(novo)
-    return {'nome': nome or 'Simulação', 'ativa': ativa, 'prioridade': prioridade,
-            'produtos': produtos, 'where': where, 'todos_produtos': todos, 'ajustes': resultado}
+    regra = {'nome': nome or 'Simulação', 'ativa': ativa, 'prioridade': prioridade,
+             'produtos': produtos, 'where': where, 'todos_produtos': todos, 'ajustes': resultado}
+    if campo_custo != 'PCEST.CUSTOULTENT':
+        regra['campo_custo'] = campo_custo
+    return regra
 
 
 def obter_regras(ativas=False):
@@ -146,6 +152,8 @@ def validar_catalogo(regra, catalogo):
     for campo in compilador.referencias:
         if campo not in disponiveis:
             raise ValueError(f'Campo não disponível: {campo}. Atualize o catálogo.')
+    if regra.get('campo_custo') and not disponiveis[regra['campo_custo']]['numerico']:
+        raise ValueError('O campo base do custo deve ser numérico.')
     for ajuste in regra['ajustes']:
         if ajuste['tipo'].startswith('campo') and not disponiveis[ajuste['campo']]['numerico']:
             raise ValueError('Parâmetros usados nos cálculos devem ser colunas numéricas.')
@@ -160,7 +168,7 @@ def salvar_regra(dados, catalogo, identificador=None):
 def expressao_regra(regra=None):
     if not regra:
         return PADRAO
-    valores = {'preco': 'preco', 'custo': 'custo'}
+    valores = {'preco': 'preco', 'custo': regra.get('campo_custo', 'custo')}
     for ajuste in regra['ajustes']:
         if ajuste['alvo'] in valores:
             valores[ajuste['alvo']] = _ajuste_texto(valores[ajuste['alvo']], ajuste)
@@ -248,6 +256,11 @@ class CompiladorSQL:
 
     def ajustes(self, regra=None):
         preco, custo = 'T.PVENDA', 'E.CUSTOULTENT'
+        if (regra or {}).get('campo_custo'):
+            campo_custo = referencia(regra['campo_custo'])
+            if not campo_custo.startswith('PCEST.'):
+                raise ValueError('O campo base do custo deve ser uma coluna de PCEST.')
+            custo = self.coluna(campo_custo)
         for ajuste in (regra or {}).get('ajustes', []):
             if ajuste['alvo'] == 'preco':
                 preco = self.aplicar(preco, ajuste)

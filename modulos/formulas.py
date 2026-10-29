@@ -5,7 +5,7 @@ from modulos.calculos import ganho_sobre_custo
 from modulos.mensagens import renderizar_mensagem
 
 
-def explicar_formula(preco, custo, exibir_valores=False, agregado=False, resultado=None, parametros=None, departamento=None):
+def explicar_formula(preco, custo, exibir_valores=False, agregado=False, resultado=None, parametros=None, departamento=None, exibir_preco_programado=False):
     if resultado and resultado.get('personalizada'):
         texto = f'🧮 Regra: {resultado["nome"]}\n'
         texto += renderizar_mensagem('formula_base', formula=resultado['expressao'])
@@ -15,6 +15,8 @@ def explicar_formula(preco, custo, exibir_valores=False, agregado=False, resulta
                       f'Preço calculado: R$ {Decimal(str(resultado["preco"] or 0)):.5f}\n'
                       f'Custo calculado: R$ {Decimal(str(resultado["custo"] or 0)):.5f}\n')
             for campo, valor in (parametros or {}).items():
+                if campo == 'PCTABPR.PTABELA' and not exibir_preco_programado:
+                    continue
                 texto += f'{campo}: {valor if valor is not None else "Não informado"}\n'
         percentual = resultado['percentual']
         return texto + (renderizar_mensagem('formula_resultado', lucro=f'{Decimal(str(percentual)):.2f}'.replace('.', ',') + '%')

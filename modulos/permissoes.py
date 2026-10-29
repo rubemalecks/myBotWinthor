@@ -315,6 +315,8 @@ def gravar_regra_margem(acao, regra=None, identificador=None):
                 regras.append({'id': identificador, **regra})
             elif acao == 'salvar':
                 existente.update(regra)
+                if 'campo_custo' not in regra:
+                    existente.pop('campo_custo', None)
             else:
                 raise ValueError('Ação inválida.')
         else:
@@ -491,10 +493,12 @@ def obter_versao_sessao_admin(senha_inicial="admin"):
     with _LOCK:
         dados = _carregar_arquivo()
         admin = dados["admin"]
+        alterado = not admin.get("senha_hash") or "versao_sessao" not in admin
         if not admin.get("senha_hash"):
             admin["senha_hash"] = _gerar_hash_senha(senha_inicial)
         admin.setdefault("versao_sessao", 1)
-        _gravar_arquivo(dados)
+        if alterado:
+            _gravar_arquivo(dados)
         return int(admin["versao_sessao"])
 
 

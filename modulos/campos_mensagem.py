@@ -10,6 +10,8 @@ def preparar_mensagens(alteracoes, catalogo=None):
         raise ValueError('Informe os tipos de mensagem que deseja alterar.')
     campos = {campo['coluna']: campo for campo in obter_campos_produto(estrito=True)}
     novos = set()
+    catalogo_custos = None
+    custos_validados = set()
     textos = {}
     for chave, texto in alteracoes.items():
         if texto is None:
@@ -26,6 +28,16 @@ def preparar_mensagens(alteracoes, catalogo=None):
                 raise ValueError('Use somente variáveis como {embalagem}, sem expressões ou formatação.')
             variavel = campo.lower()
             if variavel not in MODELOS[chave]['exemplo']:
+                if chave == 'custos':
+                    from modulos.campos_custos import validar_variavel_custo
+                    if variavel not in custos_validados:
+                        if catalogo_custos is None and variavel.startswith('pcest_'):
+                            from modulos.database import listar_colunas_custos
+                            catalogo_custos = listar_colunas_custos()
+                        validar_variavel_custo(variavel, catalogo_custos)
+                        custos_validados.add(variavel)
+                    partes.append('{' + variavel + '}')
+                    continue
                 if chave not in ('produto', 'formula_produto'):
                     raise ValueError(f'Variável não permitida neste bloco: {campo}.')
                 coluna = variavel.upper()

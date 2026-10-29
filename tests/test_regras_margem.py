@@ -39,3 +39,59 @@ class RegrasMargemTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalizar_regra({'nome':'Sem filtro'})
         normalizar_regra({'nome':'Simular'}, salvar=False)
+
+
+class CampoBaseCustoTests(unittest.TestCase):
+    def regra(self, **extras):
+        return normalizar_regra({'nome': 'Custo real', 'todos_produtos': True,
+                                 'campo_custo': 'PCEST.CUSTOREAL', **extras})
+
+    def test_calcula_sobre_coluna_escolhida_antes_dos_ajustes(self):
+        from modulos.regras_margem import expressao_regra
+        regra = self.regra(ajustes=[{'alvo': 'custo', 'operacao': '+', 'tipo': 'valor', 'valor': '2'}])
+        compilador = CompiladorSQL()
+        calculos = compilador.ajustes(regra)
+        params = {k: float(v) for k, v in compilador.parametros.items()}
+        with sqlite3.connect(':memory:') as banco:
+            valores = banco.execute(f"SELECT {calculos['custo']}, {calculos['percentual']}, {calculos['base']} FROM (SELECT 30.0 PVENDA) T CROSS JOIN (SELECT 5.0 CUSTOULTENT, 18.0 CUSTOREAL) E", params).fetchone()
+        self.assertEqual(valores, (20, 50, 20))
+        self.assertIn('PCEST.CUSTOREAL', expressao_regra(regra))
+
+    def test_base_zero_nula_ou_negativa_nao_produz_percentual(self):
+        for valor in ('0', 'NULL', '-1'):
+            c = CompiladorSQL().ajustes(self.regra())
+            with sqlite3.connect(':memory:') as banco:
+                resultado = banco.execute(f"SELECT {c['percentual']} FROM (SELECT 30.0 PVENDA) T CROSS JOIN (SELECT {valor} CUSTOREAL) E").fetchone()[0]
+            self.assertIsNone(resultado)
+
+    def test_validacao_restringe_tabela_metadados_e_tipo(self):
+        from modulos.regras_margem import validar_catalogo
+        for campo in ('PCNFENT.CUSTOREAL', 'PCTABPR.PVENDA', 'PCEST.X;DELETE', 'PCEST.CUSTOULTENT + 1'):
+            with self.subTest(campo=campo), self.assertRaises(ValueError):
+                self.regra(campo_custo=campo)
+        with self.assertRaises(ValueError):
+            validar_catalogo(self.regra(), [])
+        with self.assertRaises(ValueError):
+            validar_catalogo(self.regra(), [{'campo': 'PCEST.CUSTOREAL', 'numerico': False}])
+        validar_catalogo(self.regra(), [{'campo': 'PCEST.CUSTOREAL', 'numerico': True}])
+
+    def test_regra_antiga_preserva_base_e_formato(self):
+        regra = normalizar_regra({'nome': 'Antiga', 'todos_produtos': True})
+        self.assertNotIn('campo_custo', regra)
+        self.assertEqual(CompiladorSQL().ajustes(regra)['custo'], 'E.CUSTOULTENT')
+
+    def test_consulta_produto_e_departamento_usam_nova_base(self):
+        from unittest.mock import patch
+        from modulos import database, margem_departamento
+        regra = {'id': 'a' * 24, **self.regra()}
+        with patch.object(database, 'executar_consulta', return_value=[]) as consulta:
+            database.consultar_calculos_formulas_produto(6, regras=[regra], rascunho=regra)
+        sql, binds = consulta.call_args.args
+        self.assertIn('E.CUSTOREAL AS VALOR_0', sql)
+        self.assertIn('E.CUSTOREAL', sql)
+        self.assertIn('P.DTEXCLUSAO IS NULL', sql)
+        self.assertEqual(binds['FM_CODPROD'], 6)
+        with patch.object(margem_departamento, 'executar_consulta', return_value=[]) as consulta:
+            margem_departamento._calcular_com_regras(1, 2, 3, None, [regra])
+        self.assertIn('E.CUSTOREAL', consulta.call_args.args[0])
+        self.assertIn('P.DTEXCLUSAO IS NULL', consulta.call_args.args[0])

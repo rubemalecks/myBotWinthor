@@ -31,6 +31,13 @@ def tentar_ler(imagem):
 
 
 def ler_codigo_barras(imagem_bytes):
+    from io import BytesIO
+    from PIL import Image
+    if len(imagem_bytes) > 5 * 1024 * 1024:
+        raise ValueError('Imagem excede 5 MiB.')
+    with Image.open(BytesIO(imagem_bytes)) as cabecalho:
+        if cabecalho.width * cabecalho.height > 16_000_000:
+            raise ValueError('Imagem excede 16 megapixels.')
     dados = np.frombuffer(
         imagem_bytes,
         dtype=np.uint8

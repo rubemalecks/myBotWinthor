@@ -1,5 +1,7 @@
 # Manual detalhado de operação
 
+Este documento descreve principalmente o uso pelo código/BAT. Para EXEs, instalação, caminhos e migração, consulte `desktop/INSTALACAO.txt` e `docs/desenvolvimento.md`. O padrão de dados do instalador é diferente do padrão do código.
+
 ## IMPORTANTE — banco de dados, pasta de dados e backup
 
 > **O Oracle do WinThor e os arquivos locais do bot são armazenamentos separados. O backup de um não substitui o do outro. O projeto não cria backups automáticos nem uma pasta de backup por conta própria.**

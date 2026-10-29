@@ -205,3 +205,11 @@ Nos blocos de identificação do produto, o administrador digita uma coluna de P
 `consultar_produto` inclui as colunas salvas como `P.COLUNA AS EXTRA_N` e organiza os valores em `campos_personalizados`. O bot respeita a classificação pública ou restrita a custos; colunas sem classificação conhecida começam restritas a custos. A prévia administrativa pode mostrar todos os valores, mas isso não libera acesso ao usuário Telegram. As permissões existentes são preservadas.
 
 As rotas `/api/product-fields` permanecem para compatibilidade; não há subaba de cadastro manual de campos. Os arquivos de mensagens, campos e fórmulas ficam na pasta de dados, fora do Git.
+
+### Campos adicionais na mensagem de custos
+
+O bloco `custos` aceita variáveis `{pcest_nomecoluna}`. O catálogo administrativo consulta metadados com `SELECT * FROM PCEST WHERE 1=0`, incluindo somente tipos simples. Os nomes são normalizados e validados contra esse catálogo ao testar ou salvar; expressões SQL e variáveis em outros blocos são rejeitadas. A consulta restrita inclui as colunas selecionadas como `E.COLUNA AS PCEST_COLUNA`, preservando os binds, o filtro de exclusão e os limites de filial. Os modelos são persistidos em `mensagens.json`, sem configuração extra. O bot só exibe esse bloco com `ver_custos`; a prévia administrativa mostra todas as filiais do produto. `{custo}` e os cálculos padrão permanecem baseados em `CUSTOULTENT`.
+
+### Campo base de custo das regras de margem
+
+Regras podem persistir `campo_custo`, uma referência validada a uma coluna numérica de PCEST. A ausência mantém `PCEST.CUSTOULTENT`; a referência padrão é omitida na normalização para preservar o formato das regras antigas. Outras tabelas são rejeitadas para esse campo. Salvar e simular verificam existência e tipo contra metadados Oracle. O compilador usa a coluna como base antes dos ajustes e na proteção de custo positivo/divisão por zero. O mesmo compilador atende produto, simulação e agregação ponderada do departamento. A expressão explicativa identifica a coluna e os valores adicionais só aparecem no bot com permissão de custos. Os aliases `custo` e `preco` dos filtros WHERE continuam representando os campos padrão; use uma referência explícita para filtrar outra coluna.

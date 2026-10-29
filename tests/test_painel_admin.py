@@ -27,6 +27,130 @@ from modulos.painel_admin import app
 
 
 class PainelAdminTests(unittest.TestCase):
+    def test_tentativas_login_concorrentes_nao_apagam_bloqueio(self):
+        import threading
+        import time
+        import httpx
+        barreira = threading.Barrier(6)
+        def falhar(*args):
+            barreira.wait(timeout=5)
+            return False
+        async def disparar():
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://127.0.0.1') as cliente:
+                return await asyncio.gather(*[cliente.post('/api/login', json={'username': 'admin', 'password': 'incorreta'}) for _ in range(6)])
+        with patch('modulos.painel_admin.verificar_senha_admin', side_effect=falhar):
+            respostas = asyncio.run(disparar())
+        self.assertEqual(sorted(r.status_code for r in respostas), [401] * 5 + [429])
+        self.assertGreater(painel_admin._tentativas_login['127.0.0.1'][1], time.monotonic())
+
+    def test_host_rebinding_invalido_e_caminho_dll_remoto_bloqueados(self):
+        self.assertEqual(self.client.get('/health', headers={'Host': 'invasor.invalid'}).status_code, 400)
+        self.assertEqual(self.client.post('/api/formulas/draft', headers={'X-CSRF-Token': self.csrf, 'Origin': 'http://['}, json={}).status_code, 403)
+        with patch('modulos.painel_admin.salvar_configuracoes') as salvar:
+            resposta = self.client.put('/api/settings', headers={'X-CSRF-Token': self.csrf},
+                json={'settings': {'ORACLE_CLIENT_DIR': '//invasor.invalid/dll'}})
+        self.assertEqual(resposta.status_code, 400)
+        salvar.assert_not_called()
+
+    def test_api_rejeita_injecao_em_formula_e_variaveis_sem_acessar_oracle(self):
+        headers = {'X-CSRF-Token': self.csrf}
+        with patch('modulos.painel_formulas.listar_catalogo_formulas') as oracle:
+            for filtro in ("PCEST.CUSTOREAL > 1; DELETE FROM PCEST", "__import__('os').system('whoami')", "P.CODPROD IN (SELECT CODPROD FROM PCPRODUT)"):
+                resposta = self.client.put('/api/formulas', headers=headers,
+                    json={'nome': 'Ataque', 'where': filtro})
+                self.assertEqual(resposta.status_code, 400, resposta.text)
+            oracle.assert_not_called()
+        with patch('modulos.database.listar_colunas_custos') as oracle:
+            for texto in ('{pcest_custoreal.__class__}', '{pcest_custoreal!r}', '{__import__}', '{custo:1000000000}'):
+                resposta = self.client.post('/api/message-templates/preview', headers=headers,
+                    json={'id': 'custos', 'texto': texto})
+                self.assertEqual(resposta.status_code, 400, resposta.text)
+            oracle.assert_not_called()
+
+    def test_todas_rotas_api_exigem_sessao_e_mutacoes_exigem_csrf(self):
+        anonimo = TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50001))
+        for rota in app.routes:
+            if not rota.path.startswith('/api/') or rota.path == '/api/login':
+                continue
+            path = __import__('re').sub(r'\{[^}]+\}', '123', rota.path)
+            for metodo in rota.methods - {'HEAD', 'OPTIONS'}:
+                with self.subTest(path=path, metodo=metodo):
+                    resposta = anonimo.request(metodo, path, json={})
+                    self.assertEqual(resposta.status_code, 401, resposta.text)
+                    if metodo not in ('GET', 'HEAD', 'OPTIONS'):
+                        resposta = self.client.request(metodo, path, json={})
+                        self.assertEqual(resposta.status_code, 403, resposta.text)
+
+    def test_openapi_cabecalhos_payload_e_origem(self):
+        self.assertEqual(self.client.get('/openapi.json').status_code, 404)
+        resposta = self.client.get('/api/settings')
+        self.assertEqual(resposta.headers['cache-control'], 'no-store')
+        self.assertEqual(resposta.headers['x-frame-options'], 'DENY')
+        headers = {'X-CSRF-Token': self.csrf}
+        resposta = self.client.post('/api/formulas/draft', headers=headers, content='x' * 65537)
+        self.assertEqual(resposta.status_code, 413)
+        resposta = self.client.post('/api/formulas/draft', headers={**headers, 'Origin': 'https://invasor.invalid'}, json={})
+        self.assertEqual(resposta.status_code, 403)
+        self.assertEqual(self.client.get('/api/directories', params={'path': '//servidor/pasta'}).status_code, 400)
+
+    def test_login_remoto_com_senha_padrao_bloqueado(self):
+        remoto = TestClient(app, base_url='http://127.0.0.1', client=('192.0.2.10', 50000))
+        resposta = remoto.post('/api/login', json={'username': 'admin', 'password': 'admin'})
+        self.assertEqual(resposta.status_code, 403, resposta.text)
+        resposta = remoto.post('/api/login', headers={'X-Forwarded-For': '127.0.0.1'}, json={'username': 'admin', 'password': 'admin'})
+        self.assertEqual(resposta.status_code, 403)
+
+    def test_limite_previas_nega_sem_consultar_oracle(self):
+        with patch('modulos.painel_formulas.listar_catalogo_formulas', return_value=[]) as consultar:
+            resultados = [self.client.get('/api/formulas/catalog').status_code for _ in range(61)]
+        self.assertEqual(resultados[-1], 429)
+        self.assertLessEqual(consultar.call_count, 60)
+
+    def test_formula_persiste_custo_base_e_rejeita_tabela_diferente(self):
+        from modulos.regras_margem import obter_regras
+        headers = {'X-CSRF-Token': self.csrf}
+        regra = {'nome': 'Base real', 'todos_produtos': True, 'campo_custo': 'PCEST.CUSTOREAL', 'ajustes': []}
+        with patch('modulos.painel_formulas.listar_catalogo_formulas', return_value=[{'campo': 'PCEST.CUSTOREAL', 'numerico': True}]):
+            resposta = self.client.put('/api/formulas', headers=headers, json=regra)
+            self.assertEqual(resposta.status_code, 200, resposta.text)
+            self.assertEqual(obter_regras()[0]['campo_custo'], 'PCEST.CUSTOREAL')
+            previa = self.client.post('/api/formulas/draft', headers=headers, json=regra)
+            self.assertIn('PCEST.CUSTOREAL', previa.json()['expressao'])
+            with patch('modulos.painel_formulas.consultar_calculos_formulas_produto', return_value=[]) as consulta:
+                previa = self.client.post('/api/formulas/preview', headers=headers, json={'codprod': '6', 'regra': regra})
+                self.assertEqual(previa.status_code, 200, previa.text)
+                self.assertEqual(consulta.call_args.kwargs['rascunho']['campo_custo'], 'PCEST.CUSTOREAL')
+            regra['campo_custo'] = 'PCTABPR.PVENDA'
+            resposta = self.client.put('/api/formulas', headers=headers, json=regra)
+            self.assertEqual(resposta.status_code, 400)
+            self.assertEqual(obter_regras()[0]['campo_custo'], 'PCEST.CUSTOREAL')
+            regra['id'] = obter_regras()[0]['id']
+            regra.pop('campo_custo')
+            resposta = self.client.put('/api/formulas', headers=headers, json=regra)
+            self.assertEqual(resposta.status_code, 200, resposta.text)
+            self.assertNotIn('campo_custo', obter_regras()[0])
+
+    def test_campos_custo_catalogo_previa_e_salvamento(self):
+        headers = {'X-CSRF-Token': self.csrf}
+        catalogo = [{'coluna': 'CUSTOFIN', 'variavel': 'pcest_custofin'}]
+        with patch('modulos.database.listar_colunas_custos', return_value=catalogo), \
+             patch('modulos.database.consultar_custos', return_value=[
+                 {'codfilial': 2, 'custoultent': 3, 'dtultent': None, 'pcest_custofin': 4},
+                 {'codfilial': 5, 'custoultent': 6, 'dtultent': None, 'pcest_custofin': None}]) as consulta:
+            self.assertEqual(TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000)).get('/api/message-templates/cost-columns').status_code, 401)
+            self.assertEqual(self.client.get('/api/message-templates/cost-columns').json()['campos'], catalogo)
+            resposta = self.client.post('/api/message-templates/preview', headers=headers,
+                json={'id': 'custos', 'texto': '{filial}: {PCEST_CUSTOFIN}', 'codprod': '6'})
+            self.assertEqual(resposta.status_code, 200, resposta.text)
+            self.assertIn('2: R$ 4,00000', resposta.json()['texto'])
+            self.assertIn('5: Não informado', resposta.json()['texto'])
+            self.assertEqual(permissoes.obter_mensagens_personalizadas(), {})
+            self.assertEqual(consulta.call_args.kwargs['texto'], '{filial}: {pcest_custofin}')
+            resposta = self.client.put('/api/message-templates', headers=headers,
+                json={'templates': {'custos': '{PCEST_CUSTOFIN}'}})
+            self.assertEqual(resposta.status_code, 200, resposta.text)
+            self.assertEqual(permissoes.obter_mensagens_personalizadas()['custos'], '{pcest_custofin}')
+
     def test_coluna_digitada_testa_sem_cadastrar_e_salva_automaticamente(self):
         headers = {'X-CSRF-Token': self.csrf}
         with patch.object(painel_admin, 'listar_colunas_produto', return_value=[{'coluna':'EMBALAGEM'}]), patch.object(painel_admin, 'consultar_produto_previa') as consulta:
@@ -76,7 +200,7 @@ class PainelAdminTests(unittest.TestCase):
             consulta.assert_not_called()
 
     def test_confirmar_formula_sem_produto_nao_consulta_oracle_nem_salva(self):
-        anonimo = TestClient(app)
+        anonimo = TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000))
         self.assertEqual(anonimo.post('/api/formulas/draft', json={}).status_code, 401)
         self.assertEqual(self.client.post('/api/formulas/draft', json={}).status_code, 403)
         headers = {'X-CSRF-Token':self.csrf}
@@ -93,7 +217,7 @@ class PainelAdminTests(unittest.TestCase):
             consultar.assert_not_called()
 
     def test_formulas_exigem_sessao_csrf_e_persistem_localmente(self):
-        anonimo = TestClient(app)
+        anonimo = TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000))
         self.assertEqual(anonimo.get('/api/formulas').status_code, 401)
         regra = {'nome':'Custo com frete','produtos':[6],'ajustes':[{'alvo':'custo','operacao':'+','tipo':'valor','valor':'2'}]}
         self.assertEqual(self.client.put('/api/formulas', json=regra).status_code, 403)
@@ -111,7 +235,7 @@ class PainelAdminTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/formulas').json()['regras'], [])
 
     def test_campos_produto_exigem_login_e_csrf(self):
-        anonimo = TestClient(app)
+        anonimo = TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000))
         self.assertEqual(anonimo.get('/api/product-fields').status_code, 401)
         self.assertEqual(anonimo.get('/api/product-fields/catalog').status_code, 401)
         self.assertEqual(anonimo.put('/api/product-fields', json={'campos': []}).status_code, 401)
@@ -163,7 +287,7 @@ class PainelAdminTests(unittest.TestCase):
         self.assertFalse(permissoes.ARQUIVO_DADOS.with_name('campos_produto.json').exists())
 
     def test_personalizacao_exige_login_e_csrf(self):
-        anonimo = TestClient(app)
+        anonimo = TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000))
         self.assertEqual(anonimo.get('/api/message-templates').status_code, 401)
         self.assertEqual(anonimo.put('/api/message-templates', json={'templates': {'produto': 'Teste'}}).status_code, 401)
         self.assertEqual(self.client.put('/api/message-templates', json={'templates': {'produto': 'Teste'}}).status_code, 403)
@@ -205,7 +329,13 @@ class PainelAdminTests(unittest.TestCase):
         permissoes.inicializar()
         permissoes.registrar_usuario(123, "Pessoa", "pessoa")
         painel_admin._tentativas_login.clear()
-        self.client = TestClient(app)
+        from modulos.seguranca import ProtecaoHTTP
+        camada = app.middleware_stack
+        while camada is not None:
+            if isinstance(camada, ProtecaoHTTP):
+                camada.taxa.registros.clear()
+            camada = getattr(camada, 'app', None)
+        self.client = TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000))
         resposta = self.client.post(
             "/api/login",
             json={"username": "admin", "password": "admin"},
@@ -240,7 +370,7 @@ class PainelAdminTests(unittest.TestCase):
         self.assertEqual(resposta.status_code, 403)
 
     def test_api_de_usuarios_exige_login(self):
-        cliente = TestClient(app)
+        cliente = TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000))
         resposta = cliente.get("/api/users")
         self.assertEqual(resposta.status_code, 401)
 
@@ -259,7 +389,7 @@ class PainelAdminTests(unittest.TestCase):
         self.assertFalse(permissoes.tem_permissao(999, 'ver_custos'))
 
     def test_catalogo_filiais_regioes_exige_login_e_consulta_oracle(self):
-        self.assertEqual(TestClient(app).get('/api/access-options').status_code, 401)
+        self.assertEqual(TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000)).get('/api/access-options').status_code, 401)
         dados = {'filiais_permitidas': [{'codigo': '1', 'nome': 'Filial 1'}],
                  'tabelas_permitidas': [{'codigo': '2', 'nome': 'VAREJO', 'ativa': True}]}
         with patch('modulos.painel_admin.listar_opcoes_acesso', return_value=dados):
@@ -299,7 +429,7 @@ class PainelAdminTests(unittest.TestCase):
 
     def test_modelos_perfil_crud_e_permissoes(self):
         headers = {'X-CSRF-Token': self.csrf}
-        self.assertEqual(TestClient(app).get('/api/profile-templates').status_code, 401)
+        self.assertEqual(TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000)).get('/api/profile-templates').status_code, 401)
         self.assertEqual(self.client.post('/api/profile-templates', json={}).status_code, 403)
         iniciais = self.client.get('/api/profile-templates').json()
         self.assertEqual({m['nome'] for m in iniciais}, {'Funcionário', 'Cliente'})
@@ -367,7 +497,7 @@ class PainelAdminTests(unittest.TestCase):
         self.assertFalse(resposta.json()['aprovado'])
 
     def test_indicadores_de_conexao_exigem_login(self):
-        self.assertEqual(TestClient(app).get('/api/connections').status_code, 401)
+        self.assertEqual(TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000)).get('/api/connections').status_code, 401)
 
     def test_indicadores_distinguem_telegram_ok_e_oracle_sem_acesso(self):
         with patch('modulos.painel_admin._verificar_telegram', new_callable=AsyncMock, return_value={'status': 'connected', 'message': 'conectado'}) as telegram, patch('modulos.painel_admin._verificar_oracle', new_callable=AsyncMock, return_value={'status': 'insufficient_access', 'message': 'Sem acesso às tabelas'}) as oracle:
@@ -402,7 +532,7 @@ class PainelAdminTests(unittest.TestCase):
         self.assertEqual(permissoes.obter_configuracao()['TELEGRAM_BOT_TOKEN'], 'preservado')
 
     def test_remover_usuario_exige_autenticacao_csrf_e_preserva_admin(self):
-        self.assertEqual(TestClient(app).delete('/api/users/123').status_code, 401)
+        self.assertEqual(TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000)).delete('/api/users/123').status_code, 401)
         self.assertEqual(self.client.delete('/api/users/123').status_code, 403)
         headers = {'X-CSRF-Token': self.csrf}
         permissoes.registrar_usuario(999, 'Admin')
@@ -444,7 +574,7 @@ class PainelAdminTests(unittest.TestCase):
         self.assertTrue(permissoes.tem_permissao(456, 'consulta_preco'))
 
     def test_cadastro_exige_login_csrf_e_id_valido(self):
-        self.assertEqual(TestClient(app).post('/api/users', json={}).status_code, 401)
+        self.assertEqual(TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000)).post('/api/users', json={}).status_code, 401)
         self.assertEqual(self.client.post('/api/users', json={}).status_code, 403)
         for identificador in ('0', '-1', True, 'abc', None):
             resposta = self.client.post('/api/users', headers={'X-CSRF-Token': self.csrf},
@@ -490,7 +620,7 @@ class PainelAdminTests(unittest.TestCase):
         self.assertTrue(permissoes.tem_permissao(999, 'ver_custos'))
 
     def test_perfis_teste_validam_acesso_e_campos(self):
-        self.assertEqual(TestClient(app).get('/api/test-profiles').status_code, 401)
+        self.assertEqual(TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000)).get('/api/test-profiles').status_code, 401)
         self.assertEqual(self.client.post('/api/test-profiles', json={}).status_code, 403)
         for body in ({'action': 'ativar', 'id': 'missing'},
                      {'action': 'salvar', 'id': []}, {'action': 'criar'}, []):
@@ -504,7 +634,7 @@ class PainelAdminTests(unittest.TestCase):
         self.assertEqual(resposta.json(), {"status": "ok"})
 
     def test_seletor_de_pastas_exige_login(self):
-        self.assertEqual(TestClient(app).get("/api/directories").status_code, 401)
+        self.assertEqual(TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000)).get("/api/directories").status_code, 401)
 
     def test_seletor_lista_apenas_pastas_e_permite_voltar(self):
         raiz = Path(self.tempdir.name).resolve()
@@ -526,7 +656,7 @@ class PainelAdminTests(unittest.TestCase):
                 self.assertEqual(resposta.status_code, 400)
 
     def test_trocar_senha_persiste_e_encerra_sessoes_antigas(self):
-        outra_sessao = TestClient(app)
+        outra_sessao = TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000))
         resposta = outra_sessao.post(
             "/api/login",
             json={"username": "admin", "password": "admin"},
@@ -547,7 +677,7 @@ class PainelAdminTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/users").status_code, 200)
         self.assertEqual(outra_sessao.get("/api/users").status_code, 401)
 
-        nova_sessao = TestClient(app)
+        nova_sessao = TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000))
         resposta = nova_sessao.post(
             "/api/login",
             json={
@@ -710,7 +840,7 @@ class PainelAdminTests(unittest.TestCase):
         self.assertEqual(resposta.status_code, 400)
 
     def test_status_do_servico_windows_exige_login(self):
-        cliente = TestClient(app)
+        cliente = TestClient(app, base_url='http://127.0.0.1', client=('127.0.0.1', 50000))
         resposta = cliente.get("/api/windows-service")
         self.assertEqual(resposta.status_code, 401)
 

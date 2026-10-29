@@ -72,3 +72,7 @@ etiqueta_teste*
 # Backups locais: podem conter credenciais e cadastros
 backup/
 backups/
+
+# Binarios de distribuicao locais (publicar em Releases, nao no historico Git)
+/distribuicao/
+/.build/

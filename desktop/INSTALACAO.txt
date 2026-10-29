@@ -1,0 +1,48 @@
+ENTREGA AO CLIENTE
+
+Pacote padrão: myBotWinthor-cliente.zip (instalador + guia + hashes).
+Extraia e execute Instalar-myBotWinthor.exe. Não precisa enviar código-fonte.
+
+Alternativa portátil: myBotWinthor-portatil.zip.
+Extraia inteiro e mantenha _internal junto de myBotWinthor.exe.
+Nunca misture arquivos de versões diferentes.
+Os pacotes não incluem cadastros, credenciais, .env ou Oracle Client.
+
+myBotWinthor — Windows x64
+
+1. INSTALAR
+Execute Instalar-myBotWinthor.exe. Não precisa instalar Python nem executar como administrador.
+Programa: %LOCALAPPDATA%\Programs\myBotWinthor\versoes\<versao>
+Dados novos: %LOCALAPPDATA%\myBotWinthor\dados
+O instalador cria um atalho na Área de Trabalho para o gerenciador.
+
+2. ATUALIZAR SEM PERDER CADASTROS
+Pare o bot antigo. Se havia serviço Windows antigo, pare e desative esse serviço antes de usar o gerenciador.
+Copie a pasta de dados e o .env antigo para backup.
+No instalador, selecione a pasta antiga que contém dados_bot.json, normalmente myBotWinthor-dados (ao lado do código antigo), ou o BOT_DATA_DIR que você já usava.
+Não selecione a pasta do código/Python.
+A pasta selecionada CONTINUA SENDO USADA diretamente, sem mover nem mesclar seus JSONs. Não apague essa pasta ao remover a versão anterior.
+As atualizações seguintes lembram o caminho selecionado. O caminho aparece também no gerenciador.
+Se as conexões estavam apenas no .env antigo, confira/reinforme os dados em Configurações; o .env não é importado automaticamente.
+Não substitua a pasta de dados por uma pasta vazia.
+
+3. CONFIGURAR E RODAR
+Abra o atalho myBotWinthor. Clique em Configurações para preencher Oracle, Telegram e a porta do painel.
+Senhas e token vazios mantêm valores anteriores. Não é necessário criar .env.
+Clique em Iniciar e depois Abrir painel. Primeiro acesso local: admin/admin. Troque a senha imediatamente.
+Instalações novas começam em 127.0.0.1; a exposição em rede é configurada no painel.
+Oracle Client não acompanha o pacote: se necessário, indique uma instalação local confiável.
+O gerenciador mostra logs e permite Parar/Reiniciar. Pare e aguarde antes de fechar a janela.
+Não inicia automaticamente com o Windows e não instala serviço Windows nesta versão.
+Logs: <pasta-de-dados>\logs\aplicacao.log; na inicialização, arquivos acima de 10 MiB são rotacionados.
+
+4. ZIP PORTÁTIL
+Extraia myBotWinthor-portatil.zip inteiro. Abra myBotWinthor.exe mantendo a pasta _internal junto dele.
+Sem a configuração do instalador, usa a pasta padrão de dados novos. Para reutilizar dados antigos, prefira o instalador.
+
+5. REMOVER / VOLTAR À VERSÃO ANTERIOR
+Com a aplicação parada, as versões anteriores ficam na pasta versoes. Cada versão guarda seu desktop.json apontando aos dados.
+Não rode duas versões ao mesmo tempo nem use o mesmo token em duas máquinas.
+Não há desinstalador automático nesta versão. Pode remover a pasta do programa e o atalho, mantendo a pasta de dados e os backups.
+
+Executáveis sem assinatura digital: Windows/SmartScreen pode pedir confirmação. Não foi feita validação em máquina Windows limpa nem conexão real Oracle/Telegram; foram validados o pacote, as dependências gráficas e o ciclo iniciar/parar local sem token.
