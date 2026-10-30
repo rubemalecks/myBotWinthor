@@ -32,7 +32,7 @@ Senhas e token vazios mantêm valores anteriores. Não é necessário criar .env
 Clique em Iniciar e depois Abrir painel. Primeiro acesso local: admin/admin. Troque a senha imediatamente.
 Instalações novas começam em 127.0.0.1; a exposição em rede é configurada no painel.
 Oracle Client não acompanha o pacote: se necessário, indique uma instalação local confiável.
-O gerenciador mostra logs e permite Parar/Reiniciar. Para encerrar completamente, use Sair e parar a aplicação no menu da bandeja.
+O gerenciador mostra o estado do processo e permite Iniciar, Parar e Reiniciar. Os botões acompanham o estado atual. Use Acompanhar últimas linhas para ativar/desativar a rolagem automática dos logs e Pasta de dados para localizar os cadastros. Para editar Configurações, pare a aplicação primeiro. Para encerrar completamente, use Sair e parar a aplicação no menu da bandeja.
 A opção Iniciar com o Windows inicia o bot/API na bandeja após entrar na conta do usuário. Pode ser desativada no gerenciador. Não exige instalar serviço Windows. Fechar ou minimizar a janela mantém o bot em execução; para encerrar, use Sair e parar a aplicação no menu do ícone ao lado do relógio.
 Logs: <pasta-de-dados>\logs\aplicacao.log; na inicialização, arquivos acima de 10 MiB são rotacionados.
 
@@ -45,4 +45,8 @@ Com a aplicação parada, as versões anteriores ficam na pasta versoes. Cada ve
 Não rode duas versões ao mesmo tempo nem use o mesmo token em duas máquinas.
 Use Desinstalar-myBotWinthor.exe na pasta do programa ou Aplicativos instalados do Windows. O desinstalador encerra a aplicação, remove a inicialização automática, o atalho e os arquivos reconhecidos da instalação. Marque Apagar também cadastros, login, senhas, tokens, fórmulas e logs para remover os dados locais permanentemente. A opção começa desmarcada; confirme com cuidado. Temporários de gravação reconhecidos também são removidos. Arquivos desconhecidos e backups externos são preservados. O Oracle nunca é apagado. Se existir o serviço legado MyBotWinthorBot, a opção de removê-lo solicitará autorização administrativa (UAC).
 
-Executáveis sem assinatura digital: Windows/SmartScreen pode pedir confirmação. Não foi feita validação em máquina Windows limpa nem conexão real Oracle/Telegram; foram validados o pacote, as dependências gráficas e o ciclo iniciar/parar local sem token.
+Executáveis sem assinatura digital: Windows/SmartScreen pode pedir confirmação. Foram validados o pacote, as dependências gráficas, o ciclo iniciar/parar local sem token e uma conexão Oracle Thin pelo executável instalado. Esse diagnóstico executou somente SELECT 1 FROM DUAL; não valida acesso às tabelas WinThor nem o polling Telegram. Não houve validação em Windows limpo. O teste visual do ícone da bandeja depende de uma sessão Windows que permita criar o ícone.
+
+
+6. ORACLE OFF APÓS ATUALIZAR
+O painel mostra códigos de erro Oracle/DPY sanitizados. Confira a pasta de dados ativa e os dados da conexão em Configurações. O pacote inclui as dependências criptográficas do modo Thin. DPY-3016 pode indicar um pacote antigo/incompleto; instale a distribuição completa mais recente. DPI-1047 indica problema ao carregar Oracle Client; configure uma pasta local compatível quando o modo Thick for necessário. Pare e inicie a aplicação após mudar o cliente Oracle. Não publique config_oracle.json, tokens ou senhas ao pedir suporte.

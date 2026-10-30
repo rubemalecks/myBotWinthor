@@ -27,6 +27,17 @@ from modulos.painel_admin import app
 
 
 class PainelAdminTests(unittest.TestCase):
+    def test_diagnostico_oracle_informa_codigo_sem_vazar_credenciais(self):
+        import oracledb
+        cfg={k:'ficticio' for k in ('ORACLE_HOST','ORACLE_SERVICE','ORACLE_USER','ORACLE_PASSWORD')}
+        with patch('modulos.painel_admin.testar_conexao_oracle',side_effect=oracledb.NotSupportedError('DPY-3016 senha-ultrassecreta')):
+            with self.assertLogs(painel_admin.logger,level='WARNING') as logs:
+                resultado=asyncio.run(painel_admin._verificar_oracle(cfg))
+        self.assertEqual(resultado['status'],'error')
+        self.assertIn('DPY-3016',resultado['message'])
+        self.assertIn('criptografia',resultado['message'])
+        self.assertNotIn('senha-ultrassecreta',str(resultado)+str(logs.output))
+
     def test_tentativas_login_concorrentes_nao_apagam_bloqueio(self):
         import threading
         import time

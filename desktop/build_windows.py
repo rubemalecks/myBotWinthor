@@ -43,6 +43,28 @@ def gravar_hashes(pasta):
     (pasta / 'SHA256.txt').write_text('\n'.join(linhas) + '\n', encoding='utf-8')
 
 
+def publicar_em_pasta_existente(saida, stage, backup):
+    # Alguns processos mantêm aberta a pasta raiz, mesmo sem executar seus arquivos.
+    saida,stage,backup=map(lambda p:Path(p).resolve(),(saida,stage,backup))
+    base=saida.parent
+    if not stage.is_relative_to(base/'.build/distribuicao') or not backup.is_relative_to(base/'.build/distribuicao'):
+        raise ValueError('Área de publicação inválida.')
+    antigos=list(saida.iterdir());novos=list(stage.iterdir())
+    if any(p.is_symlink() for p in antigos+novos):raise ValueError('Links não são permitidos na publicação.')
+    backup.mkdir()
+    movidos=[];publicados=[]
+    try:
+        for arquivo in antigos:
+            arquivo.rename(backup/arquivo.name);movidos.append(arquivo.name)
+        for arquivo in novos:
+            arquivo.rename(saida/arquivo.name);publicados.append(arquivo.name)
+    except OSError:
+        for nome in reversed(publicados):(saida/nome).rename(stage/nome)
+        for nome in reversed(movidos):(backup/nome).rename(saida/nome)
+        raise
+    stage.rmdir()
+
+
 def organizar_distribuicao(saida, runtime, payload, instalador):
     saida, runtime = Path(saida).resolve(), Path(runtime).resolve()
     projeto = Path(__file__).resolve().parents[1]
@@ -95,7 +117,11 @@ def organizar_distribuicao(saida, runtime, payload, instalador):
         # Ambos são caminhos absolutos verificados dentro do destino solicitado.
         if not backup.is_relative_to(saida.parent) or saida == projeto:
             raise ValueError('Destino de backup inválido.')
-        saida.rename(backup)
+        try:
+            saida.rename(backup)
+        except PermissionError:
+            publicar_em_pasta_existente(saida,stage,backup)
+            return saida
     try:
         stage.rename(saida)
     except OSError:

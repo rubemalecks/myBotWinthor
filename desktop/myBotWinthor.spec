@@ -1,11 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 from pathlib import Path
 ROOT = Path(SPECPATH).parent
 
 datas = [(str(ROOT / 'assets'), 'assets')]
 binaries = []
 hiddenimports = ['modulos.bot', 'modulos.painel_admin']
+# O driver Thin importa primitivas de autenticação dinamicamente no código nativo.
+hiddenimports += collect_submodules('cryptography.hazmat.primitives')
 tmp_ret = collect_all('oracledb')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('zxingcpp')

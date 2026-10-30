@@ -783,6 +783,10 @@ PAGINA = """<!doctype html>
 
     let checkingConnections = false;
     function renderConnections(checks) {
+      let detalhe=document.getElementById('oracle-connection-detail');
+      if(!detalhe){detalhe=document.createElement('p');detalhe.id='oracle-connection-detail';detalhe.className='muted';detalhe.setAttribute('role','status');document.querySelector('.connection-status').after(detalhe);}
+      detalhe.hidden=!checks.oracle || checks.oracle.status==='connected';
+      detalhe.textContent=checks.oracle ? 'Oracle: '+checks.oracle.message : '';
       for (const [key, check] of Object.entries(checks)) {
         const button = document.getElementById(`${key}-connection`);
         if (!button) continue;
@@ -1699,11 +1703,18 @@ async def _verificar_oracle(configuracoes):
             "message": "sem acesso; confira host, porta, serviço e credenciais",
         }
     except Exception as erro:
-        logger.warning("Falha ao testar o Oracle (%s)", type(erro).__name__)
-        return {
-            "status": "error",
-            "message": "conexão ou consulta de teste falhou",
-        }
+        codigos=sorted(set(re.findall(r'\b(?:ORA|DPI|DPY)-\d{3,6}\b',str(erro))))
+        logger.warning("Falha ao testar o Oracle (%s; códigos=%s)", type(erro).__name__, ','.join(codigos))
+        mensagem="conexão ou consulta de teste falhou"
+        if 'DPY-3016' in codigos:
+            mensagem="Módulos de criptografia ausentes no executável. Atualize o instalador e reinicie a aplicação."
+        elif {'DPY-3010','DPY-3015'} & set(codigos):
+            mensagem="Esta conexão exige Oracle Client. Configure a pasta local do cliente e reinicie a aplicação."
+        elif 'DPI-1047' in codigos:
+            mensagem="Oracle Client não encontrado ou incompatível. Confira a pasta e a versão x64 do cliente."
+        elif 'DPY-2019' in codigos:
+            mensagem="A troca de modo Oracle exige reiniciar a aplicação."
+        return {"status":"error", "message":mensagem+(' ('+', '.join(codigos)+')' if codigos else '')}
     if not conectado:
         return {"status": "error", "message": "consulta de teste não retornou resultado"}
     return {"status": "connected", "message": "conectado; consulta de produtos do WinThor validada"}

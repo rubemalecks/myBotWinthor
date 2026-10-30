@@ -118,3 +118,19 @@ class DesktopTests(unittest.TestCase):
         for nome in ('docs','modulos','desktop','.git','tests'):
             with self.subTest(nome=nome), self.assertRaises(ValueError):
                 organizar_distribuicao(projeto/nome,projeto/'runtime-inexistente',projeto/'payload-inexistente',projeto/'exe-inexistente')
+
+    def test_publicacao_quando_raiz_esta_bloqueada(self):
+        from desktop.build_windows import organizar_distribuicao, compactar
+        with tempfile.TemporaryDirectory() as pasta:
+            root=Path(pasta);runtime=root/'runtime';(runtime/'_internal').mkdir(parents=True)
+            (runtime/'myBotWinthor.exe').write_bytes(b'exe')
+            payload=root/'payload.zip';compactar(runtime,payload);setup=root/'setup.exe';setup.write_bytes(b'setup')
+            saida=root/'distribuicao';saida.mkdir();(saida/'antigo.txt').write_text('recuperar')
+            original=Path.rename
+            def renomear(caminho,destino):
+                if caminho==saida:raise PermissionError('Raiz aberta')
+                return original(caminho,destino)
+            with patch.object(Path,'rename',renomear):organizar_distribuicao(saida,runtime,payload,setup)
+            self.assertTrue((saida/'cliente/Instalar-myBotWinthor.exe').exists())
+            self.assertFalse((saida/'antigo.txt').exists())
+            self.assertTrue(any((p/'antigo.txt').exists() for p in (root/'.build/distribuicao').glob('anterior-*')))

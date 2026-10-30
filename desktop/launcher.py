@@ -4,6 +4,12 @@ from pathlib import Path
 from desktop.common import pasta_dados, identificador
 
 def main():
+    if '--oracle-diagnostic' in sys.argv:
+        from desktop.diagnostics import diagnosticar_oracle
+        i=sys.argv.index('--oracle-diagnostic')
+        resultado=diagnosticar_oracle(sys.argv[i+1])
+        Path(sys.argv[i+2]).write_text(json.dumps(resultado),encoding='utf-8')
+        raise SystemExit(0 if resultado['ok'] else 1)
     if '--self-test' in sys.argv:
         import tempfile, importlib, traceback
         destino=Path(sys.argv[sys.argv.index('--self-test')+1])
@@ -12,6 +18,8 @@ def main():
                 os.environ['BOT_DATA_DIR']=pasta
                 for nome in ('modulos.bot','modulos.painel_admin','cv2','numpy','zxingcpp','oracledb'):
                     importlib.import_module(nome)
+                from desktop.diagnostics import validar_criptografia
+                assert validar_criptografia()
                 import tkinter as tk
                 janela=tk.Tk(); janela.withdraw(); janela.update(); janela.destroy()
                 from modulos.painel_admin import BASE_DIR
@@ -47,15 +55,40 @@ def main():
     from tkinter import ttk, messagebox, filedialog
     from tkinter.scrolledtext import ScrolledText
     from modulos.permissoes import obter_configuracao, salvar_configuracoes
-    raiz = tk.Tk(); raiz.title('myBotWinthor — Controle da aplicação'); raiz.geometry('1000x760'); raiz.minsize(960,700)
-    from desktop.theme import aplicar, cabecalho
+    raiz = tk.Tk(); raiz.title('myBotWinthor — Controle da aplicação'); raiz.geometry('1120x800'); raiz.minsize(980,720)
+    from desktop.theme import aplicar, assets
     aplicar(raiz)
-    frame = ttk.Frame(raiz, padding=16); frame.pack(fill='both', expand=True)
-    cabecalho(frame,'Controle da aplicação')
-    ttk.Label(frame, text='Dados e configurações: ' + str(dados), wraplength=940).pack(anchor='w', pady=8)
-    status = tk.StringVar(value='Parado'); ttk.Label(frame, textvariable=status).pack(anchor='w')
-    botoes = ttk.Frame(frame); botoes.pack(fill='x', pady=12)
-    logs = ScrolledText(frame, state='disabled', font=('Consolas', 10),height=12,background='#142b3a',foreground='#e3f2fa',insertbackground='white'); logs.pack(fill='both', expand=True)
+    style=ttk.Style(raiz)
+    style.configure('Card.TFrame',background='#ffffff')
+    style.configure('Card.TLabel',background='#ffffff',foreground='#263746')
+    style.configure('Muted.TLabel',foreground='#607586',font=('Segoe UI',9))
+    style.configure('Secondary.TButton',background='#e3edf3',foreground='#24475c',padding=(12,9))
+    style.map('Secondary.TButton',background=[('active','#d0e2ed'),('disabled','#edf2f5')],foreground=[('disabled','#8c9da8')])
+    style.configure('Danger.TButton',background='#f6e9e9',foreground='#9c3434',padding=(12,9))
+    frame = ttk.Frame(raiz, padding=20); frame.pack(fill='both', expand=True)
+    header=ttk.Frame(frame,style='Card.TFrame',padding=16);header.pack(fill='x',pady=(0,12));header.columnconfigure(1,weight=1)
+    from PIL import Image,ImageTk
+    image=Image.open(assets()/'Logo geométrico myBotWinthor com monograma RB.png');image.thumbnail((290,96))
+    foto=ImageTk.PhotoImage(image);marca=ttk.Label(header,image=foto,style='Card.TLabel');marca.image=foto;marca.grid(row=0,column=0,rowspan=2,padx=(0,24))
+    ttk.Label(header,text='Gerenciador Windows',style='Card.TLabel',font=('Segoe UI',19,'bold')).grid(row=0,column=1,sticky='sw')
+    ttk.Label(header,text='Controle a aplicação e acompanhe sua atividade em um só lugar.',style='Card.TLabel').grid(row=1,column=1,sticky='nw',pady=(5,0))
+    operacao=ttk.Frame(frame,style='Card.TFrame',padding=16);operacao.pack(fill='x',pady=(0,12))
+    ttk.Label(operacao,text='PROCESSO LOCAL',style='Card.TLabel',font=('Segoe UI',9,'bold')).pack(anchor='w')
+    status = tk.StringVar(value='Parada')
+    badge=ttk.Label(operacao,textvariable=status,style='Card.TLabel',font=('Segoe UI',18,'bold'));badge.pack(anchor='w',pady=(4,3))
+    status_ajuda=tk.StringVar(value='Clique em Iniciar para disponibilizar o painel e o bot.')
+    ttk.Label(operacao,textvariable=status_ajuda,style='Card.TLabel').pack(anchor='w')
+    botoes = ttk.Frame(operacao,style='Card.TFrame'); botoes.pack(fill='x', pady=(14,0))
+    ferramentas=ttk.Frame(frame);ferramentas.pack(fill='x',pady=(0,10))
+    ttk.Label(ferramentas,text='Atividade em tempo real',font=('Segoe UI',12,'bold')).pack(side='left')
+    seguir=tk.BooleanVar(value=True)
+    ttk.Checkbutton(ferramentas,text='Acompanhar últimas linhas',variable=seguir).pack(side='right')
+    logs = ScrolledText(frame,state='disabled',font=('Consolas',10),height=12,background='#122534',foreground='#e1eef5',insertbackground='white',borderwidth=0,padx=12,pady=12,wrap='none')
+    logs.pack(fill='both',expand=True)
+    rodape=ttk.Frame(frame,padding=(0,12,0,0));rodape.pack(fill='x')
+    ttk.Label(rodape,text='ARMAZENAMENTO',font=('Segoe UI',8,'bold')).pack(anchor='w')
+    ttk.Label(rodape,text=str(dados),style='Muted.TLabel',wraplength=1020).pack(anchor='w',pady=(3,8))
+    controles={}
     processo = None; reiniciar = False; posicao = 0; parando = False; prazo = 0
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.OpenMutexW.restype = ctypes.c_void_p; kernel.OpenEventW.restype = ctypes.c_void_p
@@ -111,8 +144,10 @@ def main():
                 salvar_configuracoes(valores); janela.destroy(); messagebox.showinfo('Configuração salva','Clique em Iniciar; depois abra o painel para configurar usuários e trocar a senha inicial.')
             except (ValueError,OSError) as erro: messagebox.showerror('Não foi possível salvar',str(erro))
         ttk.Button(corpo,text='Salvar configuração',command=salvar).grid(row=11,column=1,sticky='e')
-    for texto,acao in [('Iniciar',iniciar),('Parar',parar),('Reiniciar',lambda:parar(True)),('Configurações',configurar),('Abrir painel',painel),('Abrir pasta de dados',lambda:os.startfile(dados))]:
-        ttk.Button(botoes,text=texto,command=acao).pack(side='left',padx=4)
+    for texto,acao in [('Iniciar',iniciar),('Parar',parar),('Reiniciar',lambda:parar(True))]:
+        botao=ttk.Button(botoes,text=texto,command=acao);botao.pack(side='left',padx=(0,8));controles[texto]=botao
+    for texto,acao in [('Abrir painel',painel),('Configurações',configurar),('Pasta de dados',lambda:os.startfile(dados))]:
+        botao=ttk.Button(botoes,text=texto,command=acao,style='Secondary.TButton');botao.pack(side='left',padx=(0,8));controles[texto]=botao
     acoes=queue.Queue(); encerrar=False; tray=None; tray_ready=threading.Event(); tray_falhou=False
     def mostrar():
         raiz.deiconify();raiz.state('normal');raiz.lift()
@@ -145,7 +180,9 @@ def main():
             if trecho:
                 logs.configure(state='normal'); logs.insert('end',trecho.decode('utf-8',errors='replace'))
                 if int(logs.index('end-1c').split('.')[0]) > 2500: logs.delete('1.0','500.0')
-                logs.see('end'); logs.configure(state='disabled')
+
+                if seguir.get():logs.see('end')
+                logs.configure(state='disabled')
         rodando = ativo()
         if parando and not rodando:
             parando=False
@@ -153,7 +190,13 @@ def main():
         elif parando and time.monotonic()>prazo:
             parando=False; reiniciar=False
             messagebox.showwarning('Parada demorada','A parada ainda não terminou. Confira os logs; nenhuma segunda instância foi iniciada.')
-        if not parando: status.set(('Em execução' if rodando else 'Parado')+(' — bandeja bloqueada pelo sistema; janela mantida disponível' if tray_falhou else ''))
+        iniciando=bool(processo and processo.poll() is None and not rodando)
+        if not parando:status.set('Em execução' if rodando else 'Iniciando…' if iniciando else 'Parada')
+        badge.configure(foreground='#147c58' if rodando and not parando else '#087caf' if iniciando or parando else '#667987')
+        status_ajuda.set('Bandeja indisponível neste ambiente. Use a janela e o botão Sair.' if tray_falhou else 'Aguarde a conclusão das operações em andamento.' if parando else 'Processo ativo. Confira Oracle e Telegram no painel.' if rodando else 'Clique em Iniciar para disponibilizar o painel e o bot.')
+        for nome in ('Iniciar','Parar','Reiniciar','Configurações','Abrir painel'):
+            habilitado={'Iniciar':not rodando and not iniciando,'Parar':rodando,'Reiniciar':rodando,'Configurações':not rodando and not iniciando,'Abrir painel':rodando}[nome] and not parando
+            controles[nome].configure(state='normal' if habilitado else 'disabled')
         raiz.after(600,atualizar)
     try:
         import pystray
@@ -183,8 +226,8 @@ def main():
         tray=None;messagebox.showwarning('Bandeja indisponível','A janela será mantida visível: '+str(erro))
     def minimizar_evento(event):
         if event.widget is raiz and raiz.state()=='iconic' and tray:raiz.after(50,minimizar)
-    ttk.Button(botoes,text='Minimizar',command=minimizar).pack(side='left',padx=4)
-    ttk.Button(botoes,text='Sair',command=sair).pack(side='left',padx=4)
+    ttk.Button(rodape,text='Minimizar para a bandeja',command=minimizar,style='Secondary.TButton').pack(side='right',padx=(8,0))
+    ttk.Button(rodape,text='Sair',command=sair,style='Danger.TButton').pack(side='right')
     def mudar_inicio():
         from desktop.windows import inicializacao
         try:inicializacao(sys.executable,inicio.get())
@@ -193,7 +236,7 @@ def main():
     info=json.loads((base/'desktop.json').read_text(encoding='utf-8')) if (base/'desktop.json').exists() else {}
     inicio=tk.BooleanVar(value=info.get('autostart',False))
     if getattr(sys,'frozen',False) and info.get('install_root'):
-        ttk.Checkbutton(frame,text='Iniciar com o Windows na bandeja (após entrar na conta)',variable=inicio,command=mudar_inicio).pack(anchor='w',pady=8)
+        ttk.Checkbutton(rodape,text='Iniciar com o Windows na bandeja',variable=inicio,command=mudar_inicio).pack(side='left')
     raiz.bind('<Unmap>',minimizar_evento);raiz.protocol('WM_DELETE_WINDOW',minimizar)
     if '--autostart' in sys.argv:raiz.after(100,iniciar);raiz.after(200,minimizar)
     atualizar()

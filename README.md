@@ -8,7 +8,7 @@ Os pacotes são gerados localmente e não acompanham o `git clone`. Gere-os com 
 
 Use **`distribuicao/myBotWinthor-cliente.zip`**. Ele contém o instalador, as instruções e os hashes de integridade. Também é possível enviar a pasta `distribuicao/cliente/` inteira. Para execução sem instalação, use `distribuicao/myBotWinthor-portatil.zip` ou a pasta `portatil/` inteira, mantendo `_internal` junto do EXE.
 
-O cliente não precisa de Python. O gerenciador oferece configuração, logs e controles de iniciar/parar/reiniciar. Não instala serviço Windows. A inicialização com o Windows é opcional e ocorre na bandeja após o login.
+O cliente não precisa de Python. O gerenciador Windows mostra o estado do processo, oferece configuração, logs com acompanhamento opcional das últimas linhas, acesso à pasta de dados e controles de iniciar/parar/reiniciar. Pare a aplicação antes de editar Configurações. Não instala serviço Windows. A inicialização com o Windows é opcional e ocorre na bandeja após o login.
 
 Programa instalado em `%LOCALAPPDATA%/Programs/myBotWinthor/versoes/`. Dados novos em **`%LOCALAPPDATA%/myBotWinthor/dados`**. Em uma atualização, selecione a pasta antiga que contém `dados_bot.json`; ela continuará sendo usada sem mover ou sobrescrever os cadastros. Pare a versão antiga, desative serviços legados e faça backup antes. O caminho efetivo aparece no gerenciador. O `.env` antigo não é importado automaticamente: confira as conexões em Configurações.
 
@@ -39,7 +39,7 @@ Para verificar o código sem conectar ao Oracle/Telegram reais:
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 ```
 
- O build monta a distribuição nova antes de publicá-la, preserva a anterior em `.build/distribuicao/anterior-*` e rejeita dados privados no runtime. Veja [Desenvolvimento e distribuição](docs/desenvolvimento.md).
+O build monta a distribuição nova antes de publicá-la, preserva a anterior em `.build/distribuicao/anterior-*` e rejeita dados privados no runtime. Veja [Desenvolvimento e distribuição](docs/desenvolvimento.md).
 
 ## Organização
 
@@ -60,7 +60,7 @@ bot.py e arquivos BAT    pontos de entrada compatíveis com o uso pelo código
 
 ## Documentação
 
-- [Instalação e migração do cliente](desktop/INSTALACAO.txt)
+- [Instalação e migração do cliente](docs/instalacao.md)
 - [Uso do painel e do bot](docs/uso_painel_bot.md)
 - [Desenvolvimento e geração de pacotes](docs/desenvolvimento.md)
 - [Operação pelo código e backup](docs/operacao.md)

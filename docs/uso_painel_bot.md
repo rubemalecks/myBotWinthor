@@ -1,5 +1,13 @@
 # Uso do painel e do bot
 
+## Gerenciador Windows
+
+Na versão EXE, abra o atalho **myBotWinthor**. O cartão de status informa se o processo local está parado, iniciando ou em execução; ele não substitui os indicadores Oracle/Telegram do painel. Use **Iniciar**, **Parar** ou **Reiniciar**. **Abrir painel** abre a administração no navegador. Pare a aplicação para editar **Configurações**.
+
+A área **Atividade em tempo real** mostra os logs. Desmarque **Acompanhar últimas linhas** para ler registros anteriores sem rolagem automática. O rodapé mostra a pasta de dados ativa; **Pasta de dados** abre esse diretório. A instalação e migração estão no [guia Windows](instalacao.md).
+
+**Minimizar para a bandeja** mantém o processo em execução. Para encerrar, use **Sair** ou **Sair e parar a aplicação** no menu do ícone. Nas instalações registradas, a opção de iniciar com o Windows pode ser alterada pelo gerenciador.
+
 ## 1. Configurar pelo BAT ou pelo painel
 
 ### Configurar pelo arquivo BAT
@@ -39,7 +47,7 @@ Confirmações do painel desaparecem após 2,5 segundos. Erros e resultados deta
 
 O host/IP e o usuário do Oracle ficam ocultos após salvar e ao carregar valores já configurados. Use **Mostrar/Ocultar** ao lado de cada campo para visualizar ou editar os dados.
 
-A execução é pelo terminal, com `iniciar.bat` ou `.\.venv\Scripts\python.exe bot.py`. A opção de instalar serviço foi retirada do painel.
+No uso pelo código, a execução é pelo terminal, com `iniciar.bat` ou `.\.venv\Scripts\python.exe bot.py`. Na distribuição EXE, use o gerenciador Windows. A opção de instalar serviço foi retirada do painel.
 
 ### Personalizar mensagens de retorno
 
