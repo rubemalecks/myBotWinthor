@@ -89,3 +89,10 @@ Execute testes pertinentes em `tests/`; use mocks ou SQLite para validar regras 
 Leia `docs/desenvolvimento.md` antes de alterar o empacotamento. `desktop/` contém gerenciador, instalador e build; `requirements-build.txt` separa a ferramenta PyInstaller das dependências de execução. `gerar_distribuicao.bat` publica `distribuicao/cliente`, `distribuicao/portatil` e seus ZIPs completos; `.build/` guarda intermediários e a distribuição anterior. Não mescle runtimes de versões diferentes nem inclua dados, credenciais ou desktop.json nos pacotes. As duas pastas geradas são ignoradas pelo Git.
 
 No modo EXE, dados novos ficam em `%LOCALAPPDATA%/myBotWinthor/dados`. No uso pelo código, continua valendo o padrão `<projeto>-dados` ou BOT_DATA_DIR. O instalador pode reutilizar diretamente uma pasta de dados antiga escolhida pelo usuário; não a mova nem limpe durante builds/atualizações. O controle gráfico supervisiona um processo, não instala serviço Windows.
+
+
+### Bandeja, início automático e desinstalação
+
+O instalador permite iniciar com o Windows, minimizado no ícone ao lado do relógio, após entrar na conta. O menu do ícone abre o painel/gerenciador e controla iniciar, parar, reiniciar e sair. Fechar a janela apenas a oculta; para encerrar completamente, use **Sair e parar a aplicação**. A preferência pode ser alterada no gerenciador.
+
+A instalação registra **Desinstalar-myBotWinthor.exe** na pasta do programa e em Aplicativos instalados do Windows. A remoção encerra os processos e remove atalhos e início automático. Para apagar também login, senhas, tokens, usuários, fórmulas e logs, marque a opção de exclusão dos dados e confirme. A opção começa desmarcada. Backups externos, arquivos desconhecidos e o Oracle são preservados. A remoção opcional do serviço legado MyBotWinthorBot exige UAC; instalações novas não criam serviço Windows.

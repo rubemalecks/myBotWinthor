@@ -8,7 +8,7 @@ Os pacotes são gerados localmente e não acompanham o `git clone`. Gere-os com 
 
 Use **`distribuicao/myBotWinthor-cliente.zip`**. Ele contém o instalador, as instruções e os hashes de integridade. Também é possível enviar a pasta `distribuicao/cliente/` inteira. Para execução sem instalação, use `distribuicao/myBotWinthor-portatil.zip` ou a pasta `portatil/` inteira, mantendo `_internal` junto do EXE.
 
-O cliente não precisa de Python. O gerenciador oferece configuração, logs e controles de iniciar/parar/reiniciar. Não instala serviço Windows nem inicia automaticamente com o Windows.
+O cliente não precisa de Python. O gerenciador oferece configuração, logs e controles de iniciar/parar/reiniciar. Não instala serviço Windows. A inicialização com o Windows é opcional e ocorre na bandeja após o login.
 
 Programa instalado em `%LOCALAPPDATA%/Programs/myBotWinthor/versoes/`. Dados novos em **`%LOCALAPPDATA%/myBotWinthor/dados`**. Em uma atualização, selecione a pasta antiga que contém `dados_bot.json`; ela continuará sendo usada sem mover ou sobrescrever os cadastros. Pare a versão antiga, desative serviços legados e faça backup antes. O caminho efetivo aparece no gerenciador. O `.env` antigo não é importado automaticamente: confira as conexões em Configurações.
 
@@ -67,3 +67,10 @@ bot.py e arquivos BAT    pontos de entrada compatíveis com o uso pelo código
 - [Consultas e cálculos](docs/consultas.md)
 - [Segurança e limites](docs/seguranca.md)
 - [Instruções para agentes](AGENTS.md)
+
+
+### Bandeja, início automático e desinstalação
+
+O instalador permite iniciar com o Windows, minimizado no ícone ao lado do relógio, após entrar na conta. O menu do ícone abre o painel/gerenciador e controla iniciar, parar, reiniciar e sair. Fechar a janela apenas a oculta; para encerrar completamente, use **Sair e parar a aplicação**. A preferência pode ser alterada no gerenciador.
+
+A instalação registra **Desinstalar-myBotWinthor.exe** na pasta do programa e em Aplicativos instalados do Windows. A remoção encerra os processos e remove atalhos e início automático. Para apagar também login, senhas, tokens, usuários, fórmulas e logs, marque a opção de exclusão dos dados e confirme. A opção começa desmarcada. Backups externos, arquivos desconhecidos e o Oracle são preservados. A remoção opcional do serviço legado MyBotWinthorBot exige UAC; instalações novas não criam serviço Windows.

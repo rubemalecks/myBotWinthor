@@ -53,4 +53,11 @@ O instalador cria executáveis em diretórios versionados e não substitui cadas
 
 ## Verificações antes de entregar
 
-Rode os testes, compile as fontes e valide o executável com `--self-test CAMINHO_JSON` em ambiente temporário. O self-test não inicia polling Telegram nem consultas Oracle. Confira hashes e pacotes com um extrator. Faça validação adicional em Windows limpo e no ambiente do cliente antes de liberar para produção; o teste local não certifica todos os ambientes. Os binários atuais são Windows x64, sem assinatura digital. Não há desinstalador nem início automático nesta versão.
+Rode os testes, compile as fontes e valide o executável com `--self-test CAMINHO_JSON` em ambiente temporário. O self-test não inicia polling Telegram nem consultas Oracle. Confira hashes e pacotes com um extrator. Faça validação adicional em Windows limpo e no ambiente do cliente antes de liberar para produção; o teste local não certifica todos os ambientes. Os binários atuais são Windows x64, sem assinatura digital. Há desinstalador com remoção opcional dos dados e inicialização automática opcional após o login na conta Windows.
+
+
+### Bandeja, início automático e desinstalação
+
+O instalador permite iniciar com o Windows, minimizado no ícone ao lado do relógio, após entrar na conta. O menu do ícone abre o painel/gerenciador e controla iniciar, parar, reiniciar e sair. Fechar a janela apenas a oculta; para encerrar completamente, use **Sair e parar a aplicação**. A preferência pode ser alterada no gerenciador.
+
+A instalação registra **Desinstalar-myBotWinthor.exe** na pasta do programa e em Aplicativos instalados do Windows. A remoção encerra os processos e remove atalhos e início automático. Para apagar também login, senhas, tokens, usuários, fórmulas e logs, marque a opção de exclusão dos dados e confirme. A opção começa desmarcada. Backups externos, arquivos desconhecidos e o Oracle são preservados. A remoção opcional do serviço legado MyBotWinthorBot exige UAC; instalações novas não criam serviço Windows.

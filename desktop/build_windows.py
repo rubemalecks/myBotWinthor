@@ -119,9 +119,11 @@ def main():
     def build(argumentos):
         subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', *argumentos], cwd=raiz, env=env, check=True)
     build(['--distpath', str(work / 'dist'), '--workpath', str(work / 'build'), str(raiz / 'desktop/myBotWinthor.spec')])
+    build(['--onefile','--windowed','--name','Desinstalar-myBotWinthor','--icon',str(raiz/'assets/rb_app_icon.ico'),'--add-data',str(raiz/'assets')+';assets','--distpath',str(work/'uninstaller-dist'),'--workpath',str(work/'uninstaller-build'),'--specpath',str(work),str(raiz/'desktop/uninstaller.py')])
+    shutil.copy2(work/'uninstaller-dist/Desinstalar-myBotWinthor.exe',work/'dist/myBotWinthor/Desinstalar-myBotWinthor.exe')
     payload = work / 'payload.zip'
     compactar(work / 'dist/myBotWinthor', payload)
-    build(['--onefile', '--windowed', '--name', 'Instalar-myBotWinthor', '--icon', str(raiz / 'assets/rb_app_icon.ico'), '--add-data', str(payload) + ';.', '--distpath', str(work / 'installer-dist'), '--workpath', str(work / 'installer-build'), '--specpath', str(work), str(raiz / 'desktop/installer.py')])
+    build(['--onefile', '--windowed', '--name', 'Instalar-myBotWinthor', '--icon', str(raiz / 'assets/rb_app_icon.ico'), '--add-data', str(payload) + ';.', '--add-data', str(raiz/'assets')+';assets', '--distpath', str(work / 'installer-dist'), '--workpath', str(work / 'installer-build'), '--specpath', str(work), str(raiz / 'desktop/installer.py')])
     organizar_distribuicao(saida, work / 'dist/myBotWinthor', payload, work / 'installer-dist/Instalar-myBotWinthor.exe')
     print('Distribuição pronta:', saida)
 

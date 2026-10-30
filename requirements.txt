@@ -19,3 +19,4 @@ pywin32==312
 typing_extensions==4.16.0
 uvicorn>=0.30,<1
 zxing-cpp==3.1.1
+pystray==0.19.5

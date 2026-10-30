@@ -32,17 +32,17 @@ Senhas e token vazios mantêm valores anteriores. Não é necessário criar .env
 Clique em Iniciar e depois Abrir painel. Primeiro acesso local: admin/admin. Troque a senha imediatamente.
 Instalações novas começam em 127.0.0.1; a exposição em rede é configurada no painel.
 Oracle Client não acompanha o pacote: se necessário, indique uma instalação local confiável.
-O gerenciador mostra logs e permite Parar/Reiniciar. Pare e aguarde antes de fechar a janela.
-Não inicia automaticamente com o Windows e não instala serviço Windows nesta versão.
+O gerenciador mostra logs e permite Parar/Reiniciar. Para encerrar completamente, use Sair e parar a aplicação no menu da bandeja.
+A opção Iniciar com o Windows inicia o bot/API na bandeja após entrar na conta do usuário. Pode ser desativada no gerenciador. Não exige instalar serviço Windows. Fechar ou minimizar a janela mantém o bot em execução; para encerrar, use Sair e parar a aplicação no menu do ícone ao lado do relógio.
 Logs: <pasta-de-dados>\logs\aplicacao.log; na inicialização, arquivos acima de 10 MiB são rotacionados.
 
 4. ZIP PORTÁTIL
 Extraia myBotWinthor-portatil.zip inteiro. Abra myBotWinthor.exe mantendo a pasta _internal junto dele.
-Sem a configuração do instalador, usa a pasta padrão de dados novos. Para reutilizar dados antigos, prefira o instalador.
+Sem a configuração do instalador, usa a pasta padrão de dados novos. Para reutilizar dados antigos, habilitar o início automático ou usar o desinstalador, utilize o instalador. O portátil não registra automaticamente sua instalação no Windows.
 
 5. REMOVER / VOLTAR À VERSÃO ANTERIOR
 Com a aplicação parada, as versões anteriores ficam na pasta versoes. Cada versão guarda seu desktop.json apontando aos dados.
 Não rode duas versões ao mesmo tempo nem use o mesmo token em duas máquinas.
-Não há desinstalador automático nesta versão. Pode remover a pasta do programa e o atalho, mantendo a pasta de dados e os backups.
+Use Desinstalar-myBotWinthor.exe na pasta do programa ou Aplicativos instalados do Windows. O desinstalador encerra a aplicação, remove a inicialização automática, o atalho e os arquivos reconhecidos da instalação. Marque Apagar também cadastros, login, senhas, tokens, fórmulas e logs para remover os dados locais permanentemente. A opção começa desmarcada; confirme com cuidado. Temporários de gravação reconhecidos também são removidos. Arquivos desconhecidos e backups externos são preservados. O Oracle nunca é apagado. Se existir o serviço legado MyBotWinthorBot, a opção de removê-lo solicitará autorização administrativa (UAC).
 
 Executáveis sem assinatura digital: Windows/SmartScreen pode pedir confirmação. Não foi feita validação em máquina Windows limpa nem conexão real Oracle/Telegram; foram validados o pacote, as dependências gráficas e o ciclo iniciar/parar local sem token.

@@ -1,5 +1,5 @@
 """Gerenciador gráfico e processo isolado do bot/API."""
-import os, sys, json, subprocess, ctypes, time, webbrowser
+import os, sys, json, subprocess, ctypes, time, webbrowser, queue, threading
 from pathlib import Path
 from desktop.common import pasta_dados, identificador
 
@@ -27,17 +27,35 @@ def main():
     if '--worker' in sys.argv:
         worker(dados)
         return
+    (dados/'logs').mkdir(exist_ok=True)
+    gui_log=dados/'logs'/'gerenciador.log'
+    if gui_log.exists() and gui_log.stat().st_size>2*1024*1024:gui_log.replace(dados/'logs'/'gerenciador-anterior.log')
+    sys.stderr=gui_log.open('a',encoding='utf-8',buffering=1)
+    from desktop.windows import kernel as windows_kernel
+    controle=windows_kernel()
+    controle.CreateMutexW.restype=ctypes.c_void_p;controle.CreateMutexW.argtypes=[ctypes.c_void_p,ctypes.c_bool,ctypes.c_wchar_p]
+    controle.CreateEventW.restype=ctypes.c_void_p;controle.CreateEventW.argtypes=[ctypes.c_void_p,ctypes.c_bool,ctypes.c_bool,ctypes.c_wchar_p]
+    controle.WaitForSingleObject.argtypes=[ctypes.c_void_p,ctypes.c_ulong];controle.ResetEvent.argtypes=[ctypes.c_void_p]
+    guard=controle.CreateMutexW(None,True,identificador(dados)+'-gui')
+    if not guard:raise OSError('Falha no controle de instância.')
+    if ctypes.get_last_error()==183:
+        from desktop.windows import sinalizar
+        sinalizar(dados,'-show');controle.CloseHandle(guard);return
+    mostrar_evento=controle.CreateEventW(None,True,False,identificador(dados)+'-show')
+    sair_evento=controle.CreateEventW(None,True,False,identificador(dados)+'-quit')
     import tkinter as tk
     from tkinter import ttk, messagebox, filedialog
     from tkinter.scrolledtext import ScrolledText
     from modulos.permissoes import obter_configuracao, salvar_configuracoes
-    raiz = tk.Tk(); raiz.title('myBotWinthor — Controle da aplicação'); raiz.geometry('1000x680')
+    raiz = tk.Tk(); raiz.title('myBotWinthor — Controle da aplicação'); raiz.geometry('1000x760'); raiz.minsize(960,700)
+    from desktop.theme import aplicar, cabecalho
+    aplicar(raiz)
     frame = ttk.Frame(raiz, padding=16); frame.pack(fill='both', expand=True)
-    ttk.Label(frame, text='myBotWinthor', font=('Segoe UI', 20, 'bold')).pack(anchor='w')
+    cabecalho(frame,'Controle da aplicação')
     ttk.Label(frame, text='Dados e configurações: ' + str(dados), wraplength=940).pack(anchor='w', pady=8)
     status = tk.StringVar(value='Parado'); ttk.Label(frame, textvariable=status).pack(anchor='w')
     botoes = ttk.Frame(frame); botoes.pack(fill='x', pady=12)
-    logs = ScrolledText(frame, state='disabled', font=('Consolas', 10)); logs.pack(fill='both', expand=True)
+    logs = ScrolledText(frame, state='disabled', font=('Consolas', 10),height=12,background='#142b3a',foreground='#e3f2fa',insertbackground='white'); logs.pack(fill='both', expand=True)
     processo = None; reiniciar = False; posicao = 0; parando = False; prazo = 0
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.OpenMutexW.restype = ctypes.c_void_p; kernel.OpenEventW.restype = ctypes.c_void_p
@@ -71,7 +89,7 @@ def main():
     def configurar():
         if ativo():
             messagebox.showinfo('Pare antes de configurar', 'Pare a aplicação antes de alterar as conexões.'); return
-        config = obter_configuracao(); janela = tk.Toplevel(raiz); janela.title('Configurar instalação'); janela.transient(raiz); janela.grab_set()
+        config = obter_configuracao(); janela = tk.Toplevel(raiz); janela.title('Configurar instalação'); aplicar(janela); janela.transient(raiz); janela.grab_set()
         campos = {}; corpo = ttk.Frame(janela, padding=18); corpo.pack(fill='both', expand=True)
         itens = [('ORACLE_HOST','Servidor Oracle'),('ORACLE_PORT','Porta Oracle'),('ORACLE_SERVICE','Serviço Oracle'),('ORACLE_USER','Usuário Oracle'),('ORACLE_PASSWORD','Senha Oracle (vazio mantém a atual)'),('ORACLE_CLIENT_DIR','Pasta local do Oracle Client (opcional)'),('TELEGRAM_BOT_TOKEN','Token Telegram (vazio mantém o atual)'),('TELEGRAM_ADMIN_ID','ID do administrador Telegram'),('WEB_ADMIN_PORT','Porta do painel')]
         for i,(chave,rotulo) in enumerate(itens):
@@ -95,8 +113,30 @@ def main():
         ttk.Button(corpo,text='Salvar configuração',command=salvar).grid(row=11,column=1,sticky='e')
     for texto,acao in [('Iniciar',iniciar),('Parar',parar),('Reiniciar',lambda:parar(True)),('Configurações',configurar),('Abrir painel',painel),('Abrir pasta de dados',lambda:os.startfile(dados))]:
         ttk.Button(botoes,text=texto,command=acao).pack(side='left',padx=4)
+    acoes=queue.Queue(); encerrar=False; tray=None; tray_ready=threading.Event(); tray_falhou=False
+    def mostrar():
+        raiz.deiconify();raiz.state('normal');raiz.lift()
+    def minimizar():
+        if tray is not None and tray_ready.is_set():raiz.withdraw()
+        else:raiz.iconify()
+    def sair():
+        nonlocal encerrar
+        if ativo() and not messagebox.askyesno('Encerrar aplicação','Parar o bot/API e sair?'):return
+        encerrar=True
+        if ativo():parar()
     def atualizar():
-        nonlocal posicao, parando, reiniciar
+        nonlocal posicao, parando, reiniciar, encerrar
+        if controle.WaitForSingleObject(mostrar_evento,0)==0:
+            controle.ResetEvent(mostrar_evento);mostrar()
+        if controle.WaitForSingleObject(sair_evento,0)==0:
+            controle.ResetEvent(sair_evento);encerrar=True
+            print('Parada do gerenciador solicitada.',file=sys.stderr)
+            if ativo() and not parando:parar()
+        while not acoes.empty():acoes.get_nowait()()
+        if encerrar and not ativo() and not (processo and processo.poll() is None):
+            print('Processo encerrado. Fechando interface e ícone.',file=sys.stderr)
+            if tray:tray.stop()
+            raiz.destroy();return
         arquivo = dados / 'logs' / 'aplicacao.log'
         if arquivo.exists():
             if arquivo.stat().st_size < posicao: posicao=0
@@ -113,13 +153,55 @@ def main():
         elif parando and time.monotonic()>prazo:
             parando=False; reiniciar=False
             messagebox.showwarning('Parada demorada','A parada ainda não terminou. Confira os logs; nenhuma segunda instância foi iniciada.')
-        if not parando: status.set('Em execução' if rodando else 'Parado')
+        if not parando: status.set(('Em execução' if rodando else 'Parado')+(' — bandeja bloqueada pelo sistema; janela mantida disponível' if tray_falhou else ''))
         raiz.after(600,atualizar)
-    def fechar():
-        if ativo():
-            messagebox.showinfo('Aplicação ativa','Use Parar e aguarde o encerramento antes de fechar o gerenciador.'); return
-        raiz.destroy()
-    raiz.protocol('WM_DELETE_WINDOW',fechar); atualizar(); raiz.mainloop()
+    try:
+        import pystray
+        from PIL import Image
+        from desktop.theme import assets
+        def agendar(acao):return lambda icon,item:acoes.put(acao)
+        tray=pystray.Icon('myBotWinthor',Image.open(assets()/'rb_app_icon.ico'),'myBotWinthor',pystray.Menu(
+            pystray.MenuItem('Abrir gerenciador',agendar(mostrar),default=True),
+            pystray.MenuItem('Abrir painel',agendar(painel)),
+            pystray.MenuItem('Iniciar',agendar(iniciar)),
+            pystray.MenuItem('Reiniciar',agendar(lambda:parar(True))),
+            pystray.MenuItem('Parar',agendar(parar)),
+            pystray.MenuItem('Sair e parar a aplicação',agendar(sair))))
+        candidato=tray
+        def falha_tray():
+            nonlocal tray,tray_falhou
+            tray=None;tray_falhou=True;mostrar()
+        def loop_tray():
+            try:
+                def pronto(icon):
+                    icon.visible=True;tray_ready.set()
+                candidato.run(setup=pronto)
+            except Exception:
+                import traceback;traceback.print_exc(file=sys.stderr);acoes.put(falha_tray)
+        threading.Thread(target=loop_tray,daemon=True,name='icone-bandeja').start()
+    except Exception as erro:
+        tray=None;messagebox.showwarning('Bandeja indisponível','A janela será mantida visível: '+str(erro))
+    def minimizar_evento(event):
+        if event.widget is raiz and raiz.state()=='iconic' and tray:raiz.after(50,minimizar)
+    ttk.Button(botoes,text='Minimizar',command=minimizar).pack(side='left',padx=4)
+    ttk.Button(botoes,text='Sair',command=sair).pack(side='left',padx=4)
+    def mudar_inicio():
+        from desktop.windows import inicializacao
+        try:inicializacao(sys.executable,inicio.get())
+        except OSError as erro:inicio.set(not inicio.get());messagebox.showerror('Inicialização',str(erro))
+    base=Path(sys.executable).parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[1]
+    info=json.loads((base/'desktop.json').read_text(encoding='utf-8')) if (base/'desktop.json').exists() else {}
+    inicio=tk.BooleanVar(value=info.get('autostart',False))
+    if getattr(sys,'frozen',False) and info.get('install_root'):
+        ttk.Checkbutton(frame,text='Iniciar com o Windows na bandeja (após entrar na conta)',variable=inicio,command=mudar_inicio).pack(anchor='w',pady=8)
+    raiz.bind('<Unmap>',minimizar_evento);raiz.protocol('WM_DELETE_WINDOW',minimizar)
+    if '--autostart' in sys.argv:raiz.after(100,iniciar);raiz.after(200,minimizar)
+    atualizar()
+    try:raiz.mainloop()
+    finally:
+        if tray:tray.stop()
+        for handle in (mostrar_evento,sair_evento,guard):controle.CloseHandle(handle)
+
 
 def worker(dados):
     kernel=ctypes.WinDLL('kernel32',use_last_error=True)

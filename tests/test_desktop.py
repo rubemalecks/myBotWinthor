@@ -11,7 +11,7 @@ class DesktopTests(unittest.TestCase):
             original=b'{"usuarios":{"123":{"nome":"Pessoa"}}}';arquivo.write_bytes(original)
             pacote=root/'payload.zip'
             with zipfile.ZipFile(pacote,'w') as z:z.writestr('myBotWinthor.exe',b'teste')
-            with patch('desktop.installer.subprocess.run') as executar:
+            with patch('desktop.installer.subprocess.run') as executar, patch('ctypes.windll.shell32.SHGetFolderPathW',return_value=1):
                 executar.return_value.returncode=0
                 with patch('desktop.installer.subprocess.CREATE_NO_WINDOW',0,create=True):
                     exe,_=instalar(root/'programa',dados,pacote)
